@@ -16,12 +16,15 @@ dependencies = [
 render = [
     "playwright>=1.44",
 ]
+m2 = [
+    "qdrant-client>=1.10",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "respx>=0.21",
+    "qdrant-client>=1.10",
 ]
-# M2 预留：qdrant-client / networkx / dashscope 兼容客户端 / sentence-transformers
 # M3 预留：docker SDK
 
 [project.scripts]

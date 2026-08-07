@@ -2,10 +2,13 @@
 
 技术方案见 `docs/design.md`，架构决策（对已批准优化点的落地约定）见 `docs/decisions.md`。
 
-## 当前进度：M1 完成（模块一+二）
+## 当前进度：M2 完成（模块三+术语表；翻译管线按 ADR-001 并入 M4 写作阶段）
 
-站点发现（Sitemap+BFS 双引擎、不对称差异告警）→ 礼貌爬取（限速/robots/增量 ETag/JS壳升级渲染）
-→ 结构化解析（标题树/代码块/表格/链接/图片 + simhash 去重 + 版本 tag）→ manifest + 覆盖率报告。
+- **M1**：站点发现（Sitemap+BFS 双引擎、不对称差异告警）→ 礼貌爬取（限速/robots/增量 ETag/JS壳升级渲染）
+  → 结构化解析（标题树/代码块/表格/链接/图片 + simhash 去重 + 版本 tag）→ manifest + 覆盖率报告。
+- **M2**：结构化切分（标题树骨架，2166 chunks @FastAPI）→ 向量索引（Qdrant 本地模式，百炼 embedding）
+  → 知识图谱（40 概念 / 127 概念边：引用+同属确定性边 + K3 依赖边）→ 全局术语表（80 条，人工覆盖层支持）。
+  LLM 网关：K3（Anthropic 兼容）+ 输入hash缓存 + 成本台账 + 截断检测重试。
 
 ## 环境
 
@@ -29,6 +32,11 @@ python -m venv .venv
 #   -v                    调试日志
 
 .venv/Scripts/python -m pytest tests/ -q   # 测试（fixture 站点，无外部网络）
+
+# M2：知识组织（在已有 workspace 上运行；LLM 走 K3，embedding 需 DASHSCOPE_API_KEY）
+.venv/Scripts/python -m quickstudy.cli organize https://fastapi.tiangolo.com
+#   --no-llm      只建确定性页面引用图（离线）
+#   --fake-embed  无百炼 key 时用假向量验证流程（无检索语义）
 ```
 
 产物落在 `workspace/{task_id}/`：`manifest.json`（URL清单+指纹+版本+license）、
