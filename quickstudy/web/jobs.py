@@ -84,3 +84,54 @@ class JobStore:
 
     def task_dir(self, job: dict) -> Path:
         return self.root / job["task_id"]
+
+    def derive_progress(self, job: dict) -> dict:
+        """从产物推导进度与成本（不解析日志；断点续跑后天然正确）。"""
+        d = self.task_dir(job)
+        detail: dict = {}
+        manifest = _read_json(d / "manifest.json")
+        if manifest:
+            pages = manifest.get("pages", {})
+            detail["crawl"] = {"discovered": len(pages),
+                               "parsed": sum(1 for e in pages.values() if e.get("parsed"))}
+        graph = _read_json(d / "graph.json")
+        if graph and graph.get("concepts"):
+            detail["organize"] = {"concepts": len(graph["concepts"]),
+                                  "edges": len(graph.get("concept_edges", []))}
+        glossary = _read_json(d / "glossary.json")
+        if glossary:
+            detail["glossary_terms"] = glossary.get("n_terms", 0)
+        demo_reports = list(d.glob("demos/*/*/exec_report.json"))
+        if demo_reports:
+            passed = sum(1 for r in demo_reports
+                         if (_read_json(r) or {}).get("status") == "passed")
+            detail["demos"] = {"done": len(demo_reports), "passed": passed}
+        outline = _read_json(d / "outline.json")
+        if outline:
+            detail["outline"] = {"book_title": outline.get("book_title", ""),
+                                 "chapters": len(outline.get("chapters", []))}
+        state = _read_json(d / "chapters" / "state.json")
+        if state and outline:
+            detail["writing"] = {"written": len(state.get("written", {})),
+                                 "total": len(outline.get("chapters", []))}
+        recent_log: list[str] = []
+        log_file = d / "job.log"
+        if log_file.exists():
+            recent_log = log_file.read_text(
+                encoding="utf-8", errors="replace").splitlines()[-20:]
+        tin = tout = 0
+        for cf in d.glob("llm_cost*.json"):
+            t = (_read_json(cf) or {}).get("total_tokens", {})
+            tin += t.get("in", 0)
+            tout += t.get("out", 0)
+        return {"stage": job["status"], "detail": detail, "recent_log": recent_log,
+                "cost": {"tokens_in": tin, "tokens_out": tout}}
+
+
+def _read_json(path: Path) -> dict | None:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
