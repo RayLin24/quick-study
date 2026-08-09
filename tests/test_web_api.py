@@ -107,3 +107,10 @@ async def test_book_and_chapter(tmp_path, monkeypatch):
         assert r.status_code == 404
         r = await c.get(f"/api/jobs/{job['id']}/chapters/..%2Fsecret")
         assert r.status_code in (400, 404, 422)          # 路径穿越被拒
+
+
+def test_serve_parser():
+    from quickstudy.cli import build_parser
+    args = build_parser().parse_args(["serve", "--port", "9900"])
+    assert args.command == "serve" and args.port == 9900
+    assert args.host == "127.0.0.1"

@@ -58,6 +58,12 @@ def build_parser() -> argparse.ArgumentParser:
     book.add_argument("--recheck-qc", action="store_true",
                       help="不调 LLM，对已有成稿离线重跑质检并回写报告")
     book.add_argument("-v", "--verbose", action="store_true")
+
+    serve = sub.add_parser("serve", help="Web 服务：前端界面 + 任务 API（本地自用）")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8600)
+    serve.add_argument("--workspace", default="workspace")
+    serve.add_argument("--web-dist", default="web/dist", help="前端 build 产物目录")
     return p
 
 
@@ -182,6 +188,19 @@ def main(argv: list[str] | None = None) -> int:
               f"（{l3['covered_pages']}/{l3['total_pages']} 页被章节溯源引用）")
         print(f"成书目录: {out['book']['book_dir']}（npm i && npm run docs:dev 预览）")
         return 0 if not any(m["qc_errors"] for m in out["chapters"]) else 2
+
+    if args.command == "serve":
+        try:
+            import uvicorn
+        except ImportError:
+            print("缺少依赖：pip install -e \".[web]\"")
+            return 1
+        from quickstudy.web.api import create_app
+
+        app = create_app(workspace_root=args.workspace, static_dir=args.web_dist)
+        print(f"quickstudy Web 已启动: http://{args.host}:{args.port}")
+        uvicorn.run(app, host=args.host, port=args.port)
+        return 0
     return 1
 
 
