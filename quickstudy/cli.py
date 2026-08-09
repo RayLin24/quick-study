@@ -44,6 +44,20 @@ def build_parser() -> argparse.ArgumentParser:
     demo.add_argument("--limit", type=int, default=None, help="处理候选数上限（默认 5）")
     demo.add_argument("--tech", default="python", help="沙箱技术栈（当前仅 python）")
     demo.add_argument("-v", "--verbose", action="store_true")
+
+    out = sub.add_parser("outline", help="目录大纲生成 + 写作成本估算（M4 成本闸门）")
+    out.add_argument("root_url")
+    out.add_argument("--workspace", default=None)
+    out.add_argument("-v", "--verbose", action="store_true")
+
+    book = sub.add_parser("book", help="分章写作 + 质检 + VitePress 组装（M4，需先跑 outline）")
+    book.add_argument("root_url")
+    book.add_argument("--workspace", default=None)
+    book.add_argument("--max-chapters", type=int, default=None, help="只写前 N 章（试跑用）")
+    book.add_argument("--rewrite", action="store_true", help="忽略已有成稿重写")
+    book.add_argument("--recheck-qc", action="store_true",
+                      help="不调 LLM，对已有成稿离线重跑质检并回写报告")
+    book.add_argument("-v", "--verbose", action="store_true")
     return p
 
 
@@ -116,6 +130,58 @@ def main(argv: list[str] | None = None) -> int:
                   f"({r['status']}, {r.get('rounds', 0)} 轮修复)")
         print(f"产物目录: {cfg.task_dir / 'demos'}")
         return 0 if summary["passed"] == summary["total"] else 2
+
+    if args.command == "outline":
+        cfg = TaskConfig.load(args.root_url, workspace=args.workspace)
+        from quickstudy.pipeline_m4 import run_outline
+
+        out = asyncio.run(run_outline(cfg))
+        outline, est = out["outline"], out["estimate"]
+        print("\n===== M4 大纲（成本闸门：确认后再跑 book） =====")
+        print(f"《{outline['book_title']}》 共 {len(outline['chapters'])} 章"
+              f" | 依赖违例 {len(outline['dependency_violations'])} 条"
+              f" | 未覆盖概念 {len(outline['uncovered_concepts'])} 个")
+        for ch in outline["chapters"]:
+            e = next((c for c in est["per_chapter"] if c["no"] == ch["no"]), {})
+            print(f"  {ch['no']:>2}. {ch['title']} （{'★' * ch['difficulty']}"
+                  f" ~{ch['est_hours']}h, 概念 {len(ch['concept_ids'])} 个,"
+                  f" 输入约 {e.get('est_input_tokens', 0) // 1000}k token）")
+            print(f"      {ch.get('summary', '')}")
+        if outline["problems"]:
+            print("[!] 大纲问题: " + "；".join(outline["problems"]))
+        print(f"\n写作成本粗估: 输入 ~{est['total_est_input'] // 1000}k + "
+              f"输出 ~{est['total_est_output'] // 1000}k token（{est['note']}）")
+        print("确认目录无误后执行: quickstudy book <同一 URL>")
+        print(f"产物目录: {cfg.task_dir}")
+        return 0
+
+    if args.command == "book":
+        cfg = TaskConfig.load(args.root_url, workspace=args.workspace)
+        from quickstudy.pipeline_m4 import recheck_qc, run_book
+
+        if args.recheck_qc:
+            out = recheck_qc(cfg)
+            print("\n===== QC 离线复核 =====")
+            for m in out["chapters"]:
+                if m["qc_errors"]:
+                    print(f"  [!] 第{m['no']}章 {m['title']}: "
+                          + "；".join(i["detail"][:60] for i in m["qc_errors"]))
+            print(f"质检 error 章数: {out['qc_error_chapters']}/{len(out['chapters'])}")
+            return 0 if not out["qc_error_chapters"] else 2
+
+        out = asyncio.run(run_book(cfg, max_chapters=args.max_chapters,
+                                   rewrite=args.rewrite))
+        l3 = out["l3"]
+        print("\n===== M4 成书完成 =====")
+        for m in out["chapters"]:
+            mark = "[!]" if m["qc_errors"] else "[ok]"
+            print(f"  {mark} 第{m['no']}章 {m['title']} "
+                  f"(chunks {m['used_chunks'] if isinstance(m['used_chunks'], int) else len(m['used_chunks'])}, "
+                  f"demo {m['demo_count']}, 质检 error {len(m['qc_errors'])}/warn {len(m['qc_warnings'])})")
+        print(f"L3 内容覆盖率: {l3['coverage_l3']:.1%}"
+              f"（{l3['covered_pages']}/{l3['total_pages']} 页被章节溯源引用）")
+        print(f"成书目录: {out['book']['book_dir']}（npm i && npm run docs:dev 预览）")
+        return 0 if not any(m["qc_errors"] for m in out["chapters"]) else 2
     return 1
 
 

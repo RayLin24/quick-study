@@ -95,8 +95,11 @@ class LLMGateway:
     async def complete(self, prompt_name: str, prompt_version: str,
                        system: str, user: str, *,
                        max_tokens: int = 4096, temperature: float = 0.2,
-                       use_cache: bool = True) -> LLMResponse:
-        """单次补全。prompt_name+version 用于缓存键与成本归类——改 prompt 必须升版本号。"""
+                       use_cache: bool = True, timeout: float | None = None) -> LLMResponse:
+        """单次补全。prompt_name+version 用于缓存键与成本归类——改 prompt 必须升版本号。
+
+        timeout：逐调用覆盖读取超时（长文生成如章节写作需放宽到 600s）。
+        """
         key = self.cache_key(prompt_name, prompt_version, self.model, system, user)
         cache_file = self.cache_dir / f"{key}.json"
         if use_cache and cache_file.exists():
@@ -119,8 +122,12 @@ class LLMGateway:
         for attempt in range(4):
             try:
                 async with self._sem:
-                    resp = await self._client.post(f"{self.base_url}/v1/messages",
-                                                   json=body, headers=headers)
+                    req = self._client.build_request(
+                        "POST", f"{self.base_url}/v1/messages", json=body, headers=headers)
+                    if timeout is not None:
+                        req.extensions["timeout"] = {"read": timeout, "connect": 30.0,
+                                                     "write": 30.0, "pool": 60.0}
+                    resp = await self._client.send(req)
                 if resp.status_code in (429, 500, 502, 503, 504):
                     last_err = f"HTTP {resp.status_code}"
                     await asyncio.sleep(min(2 ** (attempt + 1), 30))
