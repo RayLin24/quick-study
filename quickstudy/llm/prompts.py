@@ -45,3 +45,69 @@ PROMPT_PAGE_SUMMARY_VERSION = "v1"
 PROMPT_PAGE_SUMMARY_SYSTEM = """给定技术文档某页的标题与正文节选，用一句中文概括这页讲了什么（≤60字），
 并列出该页涉及的 1~3 个关键术语（英文原名）。
 只输出 JSON：{"summary": "...", "terms": ["..."]}"""
+
+# ---- M3：Demo 补全 / 断言规格 / 修复 / 注释 ----
+
+# Demo 补全：文档片段 → 自包含可运行项目（极简风格硬规则）
+PROMPT_DEMO_BUILD_VERSION = "v1"
+PROMPT_DEMO_BUILD_SYSTEM = """你把技术文档中的代码片段补全为**自包含、可运行**的教学 Demo。
+
+硬规则（违反即失败）：
+1. 单文件优先：全部代码放在一个 main.py 中；能不用依赖就不用。
+2. 极简：删光与当前知识点无关的代码；变量命名直白。
+3. 可观察：程序必须自己验证行为并打印结果——Web 框架 Demo 用框架自带的测试客户端
+   （如 FastAPI 用 TestClient）发起请求并打印响应，不起真实服务器、不监听端口。
+   每条检查都要打印证据（关键字面值），并按"证据打印建议"包含文档中的示例值。
+4. 断言来自给你的"行为要求清单"（来自官方文档的独立分析），不是你自己发明的：
+   每条要求都必须有对应的检查代码；全部通过时最后一行打印 "ALL CHECKS PASSED"。
+5. 版本锚定：严格使用给定的文档版本对应的 API（如 FastAPI 0.1xx / Pydantic v2）。
+6. 禁止联网、禁止读写 /work 之外的文件、禁止需要凭据的外部服务。
+7. stdout_expect 字段只能列你的程序**逐字会打印**的字符串（含 "ALL CHECKS PASSED"）。
+
+只输出 JSON：
+{"name": "英文短名", "language": "python",
+ "files": [{"path": "main.py", "content": "..."}],
+ "run_command": "python main.py",
+ "stdout_expect": ["ALL CHECKS PASSED"],
+ "notes": "一句话说明 Demo 展示了什么"}"""
+
+# 独立断言规格：只看官方原文片段，不看生成的代码（ADR-005）
+PROMPT_DEMO_SPEC_VERSION = "v2"
+PROMPT_DEMO_SPEC_SYSTEM = """你是验收员。给定官方文档中的代码片段与其上下文（注意：你看不到任何实现代码），
+列出这个 Demo **必须满足的行为要求清单**，用于独立验收。
+
+要求：
+1. 只依据原文：文档展示的调用方式、返回结构、示例输出是最高依据。
+2. 每条要求具体可执行（如 "GET / 返回 JSON 且包含键 message"），不要泛泛而谈。
+3. 3~6 条，覆盖：主路径行为、关键参数效果、文档明示的示例输出。
+4. evidence_strings 是"建议程序打印出来的关键证据字面值"（如示例输出里的关键值），
+   只列原文中确实出现的值，3 个以内；这是打印建议而非强制匹配。
+
+只输出 JSON：{"requirements": ["...", "..."],
+"evidence_strings": ["建议打印的证据字面值"]}"""
+
+# 修复：stderr + 完整代码 + 原始片段 → 修复后的完整文件
+PROMPT_DEMO_FIX_VERSION = "v1"
+PROMPT_DEMO_FIX_SYSTEM = """修复一个运行失败的教学 Demo。给你：原始文档片段、当前完整代码、运行 stderr。
+
+规则：
+1. 只修导致失败的最小范围；不得删除知识点相关的 API 调用（护栏会检查）。
+2. 不得为了通过而删除断言或打印语句；断言失败说明实现不符合文档，改实现。
+3. 输出修复后的完整文件（不是 diff）。
+
+只输出 JSON：{"files": [{"path": "main.py", "content": "..."}],
+"fix_note": "一句话说明修了什么"}"""
+
+# 注释后置：跑通的裸代码 → 逐行中文注释（不得改可执行性）
+PROMPT_DEMO_ANNOTATE_VERSION = "v2"
+PROMPT_DEMO_ANNOTATE_SYSTEM = """给一段已经跑通的教学 Demo 代码加**逐行中文注释**，面向零基础初学者。
+
+规则：
+1. 只加注释、空行与 docstring，绝对不得修改、删除、重排任何代码行（包括 import 顺序、
+   字符串字面量的内容）。
+2. 注释口语化但准确：关键行说明"这行在干什么+为什么"；显而易见的行可以跳过。
+3. 文件开头加模块 docstring（三引号）：这个 Demo 演示什么、怎么运行、预期输出是什么。
+4. 术语首次出现括注英文原名。
+
+只输出 JSON：{"files": [{"path": "main.py", "content": "..."}], "readme": "原理讲解（Markdown，200字内）"}"""
+

@@ -37,6 +37,11 @@ python -m venv .venv
 .venv/Scripts/python -m quickstudy.cli organize https://fastapi.tiangolo.com
 #   --no-llm      只建确定性页面引用图（离线）
 #   --fake-embed  无百炼 key 时用假向量验证流程（无检索语义）
+
+# M3：Demo 重构与沙箱校验（需 Docker Desktop 运行中）
+.venv/Scripts/python -m quickstudy.cli demos https://fastapi.tiangolo.com --limit 5
+# 沙箱约定：镜像构建期联网装依赖，Demo 运行时 --network none；
+# 通过标准=退出码0+输出非空+预期模式命中；自愈≤3轮带符号护栏；注释后置并复跑确认。
 ```
 
 产物落在 `workspace/{task_id}/`：`manifest.json`（URL清单+指纹+版本+license）、

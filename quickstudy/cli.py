@@ -37,6 +37,13 @@ def build_parser() -> argparse.ArgumentParser:
     org.add_argument("--fake-embed", action="store_true", default=None,
                      help="强制使用假向量（无 DASHSCOPE_API_KEY 时的流程验证）")
     org.add_argument("-v", "--verbose", action="store_true")
+
+    demo = sub.add_parser("demos", help="Demo 重构与沙箱校验（M3，需 Docker）")
+    demo.add_argument("root_url")
+    demo.add_argument("--workspace", default=None)
+    demo.add_argument("--limit", type=int, default=None, help="处理候选数上限（默认 5）")
+    demo.add_argument("--tech", default="python", help="沙箱技术栈（当前仅 python）")
+    demo.add_argument("-v", "--verbose", action="store_true")
     return p
 
 
@@ -92,6 +99,23 @@ def main(argv: list[str] | None = None) -> int:
               f" | 术语: {out.get('glossary_terms', 0)}")
         print(f"产物目录: {cfg.task_dir}")
         return 0
+
+    if args.command == "demos":
+        cfg = TaskConfig.load(args.root_url, workspace=args.workspace)
+        from quickstudy.pipeline_m3 import run_m3
+
+        summary = asyncio.run(run_m3(cfg, limit=args.limit or 5, tech=args.tech))
+        print("\n===== M3 完成 =====")
+        print(f"Demo {summary['total']} 个 | 通过 {summary['passed']}"
+              f"（一次过 {int(summary['pass_rate_first_try'] * 100)}% / 最终 {int(summary['pass_rate_final'] * 100)}%）"
+              f" | 人工待办 {summary['manual_todo']} | 异常 {summary['errors']}"
+              f" | 已注释 {summary['annotated']}")
+        for r in summary["reports"]:
+            mark = {"passed": "✓", "manual_todo": "!", "error": "✗"}.get(r["status"], "?")
+            print(f"  [{mark}] {r['title']} / {r.get('section_path','')[:40]} "
+                  f"({r['status']}, {r.get('rounds', 0)} 轮修复)")
+        print(f"产物目录: {cfg.task_dir / 'demos'}")
+        return 0 if summary["passed"] == summary["total"] else 2
     return 1
 
 
