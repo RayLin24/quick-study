@@ -16,7 +16,7 @@ pip install -r requirements.txt       # 方式一可跳过（已含）
 pip install -e .                      # 安装项目本体（可编辑模式）
 playwright install chromium           # 仅 JS 渲染站需要
 cd web; npm install; npm run build; cd ..
-# 配置环境变量（见 .env.example）：ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN 必填
+# 配置：复制 .env.example 为 .env 填入密钥（也可用同名进程环境变量，优先级更高）
 quickstudy serve                      # 打开 http://127.0.0.1:8600
 ```
 

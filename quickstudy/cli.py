@@ -9,6 +9,13 @@ import sys
 from quickstudy.config import TaskConfig
 
 
+def _load_env() -> None:
+    """从运行目录向上找 .env 加载补缺（进程环境变量优先，不覆盖）。"""
+    from dotenv import find_dotenv, load_dotenv
+
+    load_dotenv(find_dotenv(usecwd=True), override=False)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="quickstudy",
                                 description="技术文档站 → 中文学习手册（M1: 发现/爬取/解析）")
@@ -72,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
+    _load_env()
     args = build_parser().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if getattr(args, "verbose", False) else logging.INFO,

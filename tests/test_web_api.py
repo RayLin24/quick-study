@@ -114,3 +114,18 @@ def test_serve_parser():
     args = build_parser().parse_args(["serve", "--port", "9900"])
     assert args.command == "serve" and args.port == 9900
     assert args.host == "127.0.0.1"
+
+
+def test_load_env_from_dotenv(tmp_path, monkeypatch):
+    """_load_env 从 .env 补缺；进程已有变量不被覆盖。"""
+    from quickstudy.cli import _load_env
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "http://process-env")
+    (tmp_path / ".env").write_text(
+        "ANTHROPIC_BASE_URL=http://dotenv-file\nANTHROPIC_AUTH_TOKEN=from-dotenv\n",
+        encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    _load_env()
+    import os
+    assert os.environ["ANTHROPIC_AUTH_TOKEN"] == "from-dotenv"      # .env 补缺
+    assert os.environ["ANTHROPIC_BASE_URL"] == "http://process-env"  # 进程优先

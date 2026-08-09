@@ -10,6 +10,7 @@ dependencies = [
     "lxml>=5.0",
     "trafilatura>=1.12",
     "pyyaml>=6.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
