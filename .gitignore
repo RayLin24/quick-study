@@ -223,3 +223,5 @@ workspace/
 
 # 前端
 node_modules/
+.env
+.cursor
