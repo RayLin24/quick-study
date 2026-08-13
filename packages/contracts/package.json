@@ -1,0 +1,6 @@
+{
+  "name": "@quick-study/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Generated API contracts shared with the Quick Study web app"
+}

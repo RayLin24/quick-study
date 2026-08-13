@@ -1,0 +1,37 @@
+{
+  "name": "@quick-study/ts-analyzer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Static JavaScript/TypeScript repository analyzer that emits a stable JSON graph of files, symbols, imports and confidence-scored call edges",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "quick-study-ts-analyzer": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:fast": "node --test --disable-warning=ExperimentalWarning \"tests/**/*.test.ts\"",
+    "test": "npm run build && npm run test:fast",
+    "check": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}

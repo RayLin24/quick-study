@@ -1,0 +1,35 @@
+{
+  "name": "quick-study",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev:web": "npm --prefix apps/web run dev",
+    "dev:api": "uv run --project apps/api uvicorn app.main:app --app-dir apps/api --reload-dir apps/api --host 0.0.0.0 --port 8000 --reload",
+    "dev:worker": "uv run --project apps/api celery --workdir apps/api -A app.worker.celery_app worker --loglevel=INFO",
+    "test:web": "npm --prefix apps/web run test:smoke",
+    "test:api": "uv run --project apps/api pytest apps/api/tests -q",
+    "lint:api": "uv run --project apps/api ruff check apps/api/app apps/api/tests apps/api/alembic",
+    "db:upgrade": "uv run --project apps/api alembic -c apps/api/alembic.ini upgrade head",
+    "db:downgrade": "uv run --project apps/api alembic -c apps/api/alembic.ini downgrade -1",
+    "db:revision": "uv run --project apps/api alembic -c apps/api/alembic.ini revision --autogenerate",
+    "db:history": "uv run --project apps/api alembic -c apps/api/alembic.ini history --indicate-current",
+    "build:ts-analyzer": "npm --prefix packages/ts-analyzer run build",
+    "build:diagram-renderer": "npm --prefix packages/diagram-renderer run build",
+    "build:packages": "npm run build:ts-analyzer && npm run build:diagram-renderer",
+    "test:ts-analyzer": "npm --prefix packages/ts-analyzer test",
+    "test:diagram-renderer": "npm --prefix packages/diagram-renderer test",
+    "check:ts-analyzer": "npm --prefix packages/ts-analyzer run check",
+    "check:diagram-renderer": "npm --prefix packages/diagram-renderer run check",
+    "check:packages": "npm run check:ts-analyzer && npm run check:diagram-renderer",
+    "test:workflow": "uv run --project apps/api pytest apps/api/tests/test_workflow_state.py apps/api/tests/test_workflow_graph.py apps/api/tests/test_workflow_runner.py apps/api/tests/test_checkpointer_contract.py -q",
+    "lint:workflow": "uv run --project apps/api ruff check apps/api/app/workflows apps/api/tests/test_workflow_state.py apps/api/tests/test_workflow_graph.py apps/api/tests/test_workflow_runner.py apps/api/tests/test_checkpointer_contract.py apps/api/tests/_checkpointer_worker.py",
+    "check:compose": "docker compose --env-file .env.example config --quiet",
+    "check:scaffold": "npm run test:api && npm run lint:api && npm run test:web && npm run check:compose",
+    "check:domain-auth": "npm run test:api && npm run lint:api",
+    "check:workflow": "npm run test:workflow && npm run lint:workflow",
+    "check": "npm run check:scaffold && npm run check:packages"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}

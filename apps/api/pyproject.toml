@@ -1,0 +1,61 @@
+[project]
+name = "api"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.14",
+    "argon2-cffi>=23.1",
+    "celery[redis]>=5.6.3",
+    "cryptography>=44",
+    "fastapi>=0.141.1",
+    "httpx>=0.28.1",
+    "langchain-deepseek>=1.1,<2",
+    "langgraph>=1.2.11,<2",
+    "langgraph-checkpoint-mysql[pymysql]>=3.0.0,<3.1",
+    "pydantic-settings>=2.15.0",
+    "pymysql>=1.1",
+    "sqlalchemy>=2.0",
+    "trafilatura>=2.0",
+    "uvicorn[standard]>=0.52.1",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.2",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# B catches the bug-prone constructs review keeps having to look for by hand; S is the
+# security ruleset, which matters most in a codebase that builds SQL, spawns subprocesses
+# and handles credentials.
+select = ["B", "E", "F", "I", "S", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# A test asserts, and its fixtures carry passwords and digests that are obviously fake.
+"**/tests/**" = ["S101", "S105", "S106", "S107"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI declares dependencies as argument defaults; that is the framework, not a bug.
+# ``require_project_role`` is one of ours, and is a dependency factory of the same shape.
+extend-immutable-calls = [
+    "app.auth.dependencies.require_project_role",
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+    "fastapi.Security",
+]

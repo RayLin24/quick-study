@@ -1,0 +1,40 @@
+{
+  "name": "@quick-study/diagram-renderer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Validates Mermaid sources with a pinned Mermaid release and renders sanitized, script-free SVG",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "quick-study-diagram-renderer": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:fast": "node --test --test-concurrency=2 --disable-warning=ExperimentalWarning \"tests/**/*.test.ts\"",
+    "test": "npm run build && npm run test:fast",
+    "check": "npm run typecheck && npm run test"
+  },
+  "dependencies": {
+    "jsdom": "27.0.1",
+    "mermaid": "11.16.1"
+  },
+  "devDependencies": {
+    "@types/jsdom": "27.0.0",
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}

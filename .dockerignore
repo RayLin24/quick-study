@@ -1,0 +1,17 @@
+.git
+.gitignore
+.env
+**/.env
+**/.next
+**/.pytest_cache
+**/.ruff_cache
+**/.venv
+**/__pycache__
+**/coverage
+**/next-env.d.ts
+**/node_modules
+**/out
+**/*.pyc
+**/*.tsbuildinfo
+.superpowers
+data/artifacts/*

@@ -223,5 +223,11 @@ workspace/
 
 # 前端
 node_modules/
+.next/
+*.tsbuildinfo
 .env
 .cursor
+
+# 内容寻址产物
+data/artifacts/*
+!data/artifacts/.gitkeep
