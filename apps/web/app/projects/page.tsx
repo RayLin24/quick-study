@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { ApiError, apiGet } from "../../lib/api";
+
 interface Project {
   id: string;
   name: string;
@@ -18,23 +20,15 @@ export default function Projects() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch("/api/projects")
-      .then((response) => {
-        if (response.status === 401) {
+    apiGet<Project[]>("/api/projects")
+      .then(setProjects)
+      .catch((err: unknown) => {
+        if (err instanceof ApiError && err.status === 401) {
           router.push("/login");
-          return null;
+          return;
         }
-        if (!response.ok) {
-          throw new Error("Failed to load projects");
-        }
-        return response.json();
+        setError(err instanceof Error ? err.message : "Failed to load projects");
       })
-      .then((data) => {
-        if (data) {
-          setProjects(data);
-        }
-      })
-      .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [router]);
 

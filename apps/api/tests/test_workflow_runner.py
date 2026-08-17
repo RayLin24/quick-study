@@ -21,8 +21,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from test_checkpointer_contract import checkpointer_url, recreate_schema, render
 
 from alembic import command
-from app.db.models import Run, Step
-from app.db.models.enums import ApprovalDecision, RunPhase, RunStatus, StepStatus
+from app.db.models import Outline, Run, Step
+from app.db.models.enums import (
+    ApprovalDecision,
+    OutlineStatus,
+    RunPhase,
+    RunStatus,
+    StepStatus,
+)
 from app.workflows.checkpointing import (
     InMemoryCheckpointerProvider,
     MySQLCheckpointerProvider,
@@ -95,6 +101,13 @@ class TestStarting:
         assert run.status is RunStatus.SUSPENDED
         assert run.phase is RunPhase.HUMAN_INTERRUPT
         assert run.started_at is not None
+
+        with session_factory() as session:
+            outline = session.scalars(
+                sa.select(Outline).where(Outline.run_id == run_id)
+            ).one()
+        assert outline.status is OutlineStatus.PENDING_APPROVAL
+        assert outline.structure["chapters"]
 
     def test_every_node_leaves_a_step_row_behind(
         self, runner: TutorialRunner, session_factory: SessionFactory, run_id: str

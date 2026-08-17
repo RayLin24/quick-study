@@ -10,6 +10,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.settings import Settings, get_settings
+from app.storage.content_store import build_content_store
 
 
 def build_engine(
@@ -47,6 +48,7 @@ def get_session_factory() -> sessionmaker[Session]:
 def session_scope() -> Iterator[Session]:
     """Run a unit of work that commits on success and rolls back on any exception."""
     with get_session_factory()() as session:
+        session.info["content_store"] = build_content_store()
         try:
             yield session
             session.commit()
@@ -58,6 +60,7 @@ def session_scope() -> Iterator[Session]:
 def get_session() -> Iterator[Session]:
     """FastAPI dependency. Routes commit explicitly so read paths stay read-only."""
     with get_session_factory()() as session:
+        session.info["content_store"] = build_content_store()
         try:
             yield session
         except Exception:

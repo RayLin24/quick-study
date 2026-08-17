@@ -19,3 +19,6 @@ celery_app.conf.update(
 @celery_app.task(name="app.worker.health")
 def health() -> dict[str, str]:
     return {"service": "worker", "status": "ok"}
+
+
+from app.workflows import tasks as _tutorial_tasks  # noqa: E402, F401

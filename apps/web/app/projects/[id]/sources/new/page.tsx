@@ -3,12 +3,14 @@
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ApiError, apiPost } from "../../../../../lib/api";
+
 export default function NewSource() {
   const params = useParams();
   const router = useRouter();
   const projectId = params.id as string;
 
-  const [kind, setKind] = useState("web");
+  const [kind, setKind] = useState("website");
   const [locator, setLocator] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
@@ -20,22 +22,17 @@ export default function NewSource() {
     setError("");
 
     try {
-      const response = await fetch(`/api/projects/${projectId}/sources`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          kind,
-          locator,
-          display_name: displayName,
-        }),
+      await apiPost(`/api/projects/${projectId}/sources`, {
+        kind,
+        locator,
+        display_name: displayName,
       });
-
-      if (!response.ok) {
-        throw new Error("Failed to add source");
-      }
-
       router.push(`/projects/${projectId}`);
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        router.push("/login");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to add source");
     } finally {
       setLoading(false);
@@ -60,8 +57,8 @@ export default function NewSource() {
               value={kind}
               onChange={(event) => setKind(event.target.value)}
             >
-              <option value="web">Documentation Site</option>
-              <option value="github">GitHub Repository</option>
+              <option value="website">Documentation Site</option>
+              <option value="github_repo">GitHub Repository</option>
             </select>
           </div>
 
@@ -71,7 +68,7 @@ export default function NewSource() {
               id="locator"
               value={locator}
               onChange={(event) => setLocator(event.target.value)}
-              placeholder="https://docs.example.com or owner/repo"
+              placeholder="https://docs.example.com or https://github.com/owner/repo"
               required
             />
           </div>

@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { saveCsrfToken } from "../../lib/api";
+
 export default function Login() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -18,6 +20,8 @@ export default function Login() {
     try {
       const response = await fetch("/api/auth/login", {
         method: "POST",
+        cache: "no-store",
+        credentials: "include",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({ email, password }),
       });
@@ -27,6 +31,10 @@ export default function Login() {
         return;
       }
 
+      const payload = (await response.json()) as { csrf_token?: string };
+      if (payload.csrf_token) {
+        saveCsrfToken(payload.csrf_token);
+      }
       router.push("/projects");
     } catch {
       setError("Login failed");

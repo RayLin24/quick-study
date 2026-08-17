@@ -3,12 +3,13 @@
 import { useParams, useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ApiError, apiPost } from "../../../../../lib/api";
+
 export default function NewRun() {
   const params = useParams();
   const router = useRouter();
   const projectId = params.id as string;
 
-  const [title, setTitle] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -18,19 +19,13 @@ export default function NewRun() {
     setError("");
 
     try {
-      const response = await fetch(`/api/projects/${projectId}/runs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ title }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to start run");
-      }
-
-      const run = await response.json();
+      const run = await apiPost<{ id: string }>(`/api/projects/${projectId}/runs`, {});
       router.push(`/projects/${projectId}/runs/${run.id}`);
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        router.push("/login");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to start run");
     } finally {
       setLoading(false);
@@ -47,18 +42,7 @@ export default function NewRun() {
       <div className="card" style={{ maxWidth: 600 }}>
         <form onSubmit={handleSubmit}>
           {error && <div className="error">{error}</div>}
-
-          <div className="form-group">
-            <label htmlFor="title">Title</label>
-            <input
-              id="title"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="e.g. LangChain v1 Tutorial"
-              required
-            />
-          </div>
-
+          <p>The worker will take the project sources through the generation pipeline.</p>
           <div className="form-actions">
             <button type="submit" disabled={loading}>
               {loading ? "Starting..." : "Start Run"}

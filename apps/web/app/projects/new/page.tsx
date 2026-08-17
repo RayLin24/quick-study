@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { ApiError, apiPost } from "../../../lib/api";
+
 export default function NewProject() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -19,25 +21,19 @@ export default function NewProject() {
     setError("");
 
     try {
-      const response = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          name,
-          slug,
-          output_language: outputLanguage,
-          reader_level: readerLevel,
-          length_preset: lengthPreset,
-        }),
+      const project = await apiPost<{ id: string }>("/api/projects", {
+        name,
+        slug,
+        output_language: outputLanguage,
+        reader_level: readerLevel,
+        length_preset: lengthPreset,
       });
-
-      if (!response.ok) {
-        throw new Error("Failed to create project");
-      }
-
-      const project = await response.json();
       router.push(`/projects/${project.id}`);
     } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        router.push("/login");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Failed to create project");
     } finally {
       setLoading(false);
@@ -107,9 +103,9 @@ export default function NewProject() {
               value={lengthPreset}
               onChange={(event) => setLengthPreset(event.target.value)}
             >
-              <option value="short">Short</option>
+              <option value="brief">Brief</option>
               <option value="standard">Standard</option>
-              <option value="long">Long</option>
+              <option value="deep">Deep</option>
             </select>
           </div>
 

@@ -7,10 +7,17 @@ from typing import Annotated
 from fastapi import Depends, Form, status
 
 from app.auth.access import ProjectAccess, require_run_for_project
-from app.auth.dependencies import DbSession, protected_router, require_project_role
-from app.db.models import Run
+from app.auth.dependencies import (
+    DbSession,
+    access_errors_as_404,
+    protected_router,
+    require_project_role,
+)
+from app.db.models import Project, Run
 from app.db.models.enums import ProjectRole, RunPhase
 from app.runs.state_machine import start_run
+from app.workflows.enqueue import enqueue_start
+from app.workflows.publication import latest_outline, outline_payload
 
 router = protected_router(prefix="/projects/{project_id}/runs", tags=["runs"])
 
@@ -46,15 +53,17 @@ def list_runs(
 def create_run(
     project_id: str,
     access: EditorAccess,
-    title: Annotated[str, Form()],
     session: DbSession,
+    title: Annotated[str, Form()] = "",
 ) -> dict[str, str]:
-    """Start a tutorial generation run."""
-    run = Run(project_id=project_id, title=title)
+    """Start a tutorial generation run and wake the worker."""
+    _ = title
+    run = Run(project_id=project_id)
     session.add(run)
     session.flush()
     start_run(run, phase=RunPhase.DISCOVER)
     session.commit()
+    enqueue_start(run.id)
     return {"id": run.id, "status": run.status.value, "phase": run.phase.value}
 
 
@@ -64,15 +73,18 @@ def get_run(
     run_id: str,
     access: ViewerAccess,
     session: DbSession,
-) -> dict[str, str]:
+) -> dict[str, object]:
     """Return one run, scoped to the project."""
-    run = require_run_for_project(session, project_id=project_id, run_id=run_id)
+    with access_errors_as_404():
+        run = require_run_for_project(session, project_id=project_id, run_id=run_id)
+    project = session.get(Project, project_id)
     return {
         "id": run.id,
-        "title": run.title,
+        "title": project.name if project is not None else "",
         "status": run.status.value,
         "phase": run.phase.value,
         "created_at": run.created_at.isoformat(),
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "outline": outline_payload(latest_outline(session, run.id)),
     }

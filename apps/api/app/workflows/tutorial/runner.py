@@ -39,7 +39,9 @@ from app.runs.steps import (
     ensure_step,
     fail_step,
 )
+from app.storage.content_store import ContentAddressedStore
 from app.workflows.checkpointing import CheckpointerProvider
+from app.workflows.publication import persist_export_bundle, persist_pending_outline
 from app.workflows.tutorial.graph import compile_tutorial_graph
 from app.workflows.tutorial.nodes import TutorialNodes
 from app.workflows.tutorial.recording import DatabaseStepRecorder, StepRecorder
@@ -82,12 +84,14 @@ class TutorialRunner:
         owner: str,
         nodes: TutorialNodes | None = None,
         pipeline_version: str = PIPELINE_VERSION,
+        store: ContentAddressedStore | None = None,
     ) -> None:
         self._provider = provider
         self._session_factory = session_factory
         self._owner = owner
         self._nodes = nodes or TutorialNodes()
         self._pipeline_version = pipeline_version
+        self._store = store
 
     def start(self, run_id: str) -> RunOutcome:
         """Begin, or take over, the graph for ``run_id``."""
@@ -161,8 +165,12 @@ class TutorialRunner:
             run = _require_run(session, run_id)
             if pending is not None:
                 suspend_run(run, phase=RunPhase.HUMAN_INTERRUPT)
+                outline = persist_pending_outline(session, run, pending)
+                pending = {**pending, "outline_id": outline.id}
             elif run.phase is RunPhase.PUBLISH:
                 succeed_run(run)
+                if self._store is not None:
+                    persist_export_bundle(session, self._store, run, result)
             complete_step(session, _wake_step(session, wake_key), owner=self._owner)
             return RunOutcome(run_id, run.status, run.phase, interrupt=pending)
 

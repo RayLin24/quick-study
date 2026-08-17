@@ -5,7 +5,7 @@
   "scripts": {
     "dev:web": "npm --prefix apps/web run dev",
     "dev:api": "uv run --project apps/api uvicorn app.main:app --app-dir apps/api --reload-dir apps/api --host 0.0.0.0 --port 8000 --reload",
-    "dev:worker": "uv run --project apps/api celery --workdir apps/api -A app.worker.celery_app worker --loglevel=INFO",
+    "dev:worker": "uv run --project apps/api celery --workdir apps/api -A app.worker.celery_app worker --loglevel=INFO --pool=solo",
     "test:web": "npm --prefix apps/web run test:smoke",
     "test:api": "uv run --project apps/api pytest apps/api/tests -q",
     "lint:api": "uv run --project apps/api ruff check apps/api/app apps/api/tests apps/api/alembic",

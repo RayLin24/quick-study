@@ -10,12 +10,14 @@ from app.auth.access import ProjectAccess, require_outline_for_project
 from app.auth.dependencies import (
     CurrentSession,
     DbSession,
+    access_errors_as_404,
     protected_router,
     require_project_role,
 )
 from app.clock import utcnow
 from app.db.models import Approval
-from app.db.models.enums import ApprovalDecision, ApprovalSubject, ProjectRole
+from app.db.models.enums import ApprovalDecision, ApprovalSubject, OutlineStatus, ProjectRole
+from app.workflows.enqueue import enqueue_resume
 
 router = protected_router(prefix="/projects/{project_id}/approvals", tags=["approvals"])
 
@@ -33,9 +35,10 @@ def decide_outline(
     note: Annotated[str, Form()] = "",
 ) -> dict[str, str]:
     """Approve, reject or request changes on an outline."""
-    outline = require_outline_for_project(
-        session, project_id=project_id, outline_id=outline_id
-    )
+    with access_errors_as_404():
+        outline = require_outline_for_project(
+            session, project_id=project_id, outline_id=outline_id
+        )
     approval = Approval(
         project_id=project_id,
         run_id=outline.run_id,
@@ -47,7 +50,21 @@ def decide_outline(
         note=note,
     )
     session.add(approval)
+    if approval.decision is ApprovalDecision.APPROVED:
+        outline.status = OutlineStatus.APPROVED
+    elif approval.decision is ApprovalDecision.REJECTED:
+        outline.status = OutlineStatus.REJECTED
+    elif approval.decision is ApprovalDecision.CHANGES_REQUESTED:
+        outline.status = OutlineStatus.REJECTED
     session.commit()
+    enqueue_resume(
+        outline.run_id,
+        {
+            "decision": approval.decision.value,
+            "note": approval.note,
+            "decided_by": current.user.id,
+        },
+    )
     return {
         "outline_id": outline.id,
         "decision": approval.decision.value,

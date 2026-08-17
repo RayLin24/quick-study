@@ -71,7 +71,7 @@ class OutlineDraft(TypedDict):
     chapters: list[OutlineChapter]
 
 
-class ChapterDraft(TypedDict):
+class ChapterDraft(TypedDict, total=False):
     slug: str
     title: str
     ordinal: int
@@ -79,6 +79,8 @@ class ChapterDraft(TypedDict):
     revision: int
     content_hash: str | None
     locked: bool
+    summary: str
+    markdown: str
 
 
 class DiagramDraft(TypedDict):
@@ -268,6 +270,8 @@ def chapter_draft(
     revision: int = 1,
     content_hash: str | None = None,
     locked: bool = False,
+    summary: str = "",
+    markdown: str = "",
 ) -> ChapterDraft:
     return {
         "slug": slug,
@@ -277,6 +281,8 @@ def chapter_draft(
         "revision": revision,
         "content_hash": content_hash,
         "locked": locked,
+        "summary": summary,
+        "markdown": markdown,
     }
 
 

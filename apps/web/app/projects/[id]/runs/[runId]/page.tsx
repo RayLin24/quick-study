@@ -4,6 +4,24 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { ApiError, apiGet, apiPost } from "../../../../../lib/api";
+
+interface OutlineChapter {
+  slug: string;
+  title: string;
+  ordinal: number;
+  summary: string;
+}
+
+interface Outline {
+  id: string;
+  version: number;
+  title: string;
+  summary: string;
+  status: string;
+  chapters: OutlineChapter[];
+}
+
 interface Run {
   id: string;
   title: string;
@@ -12,6 +30,7 @@ interface Run {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  outline: Outline | null;
 }
 
 export default function RunDetail() {
@@ -23,27 +42,63 @@ export default function RunDetail() {
   const [run, setRun] = useState<Run | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [deciding, setDeciding] = useState(false);
 
   useEffect(() => {
-    fetch(`/api/projects/${projectId}/runs/${runId}`)
-      .then((response) => {
-        if (response.status === 401) {
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const next = await apiGet<Run>(`/api/projects/${projectId}/runs/${runId}`);
+        if (!cancelled) {
+          setRun(next);
+          setError("");
+        }
+      } catch (err) {
+        if (cancelled) {
+          return;
+        }
+        if (err instanceof ApiError && err.status === 401) {
           router.push("/login");
-          return null;
+          return;
         }
-        if (!response.ok) {
-          throw new Error("Failed to load run");
+        setError(err instanceof Error ? err.message : "Failed to load run");
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
         }
-        return response.json();
-      })
-      .then((data) => {
-        if (data) {
-          setRun(data);
-        }
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      }
+    };
+
+    void load();
+    const timer = window.setInterval(() => {
+      void load();
+    }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [projectId, runId, router]);
+
+  const decide = async (decision: "approved" | "rejected") => {
+    if (!run?.outline) {
+      return;
+    }
+    setDeciding(true);
+    setError("");
+    try {
+      await apiPost(`/api/projects/${projectId}/approvals/${run.outline.id}`, {
+        decision,
+        note: "",
+      });
+      const next = await apiGet<Run>(`/api/projects/${projectId}/runs/${runId}`);
+      setRun(next);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to submit decision");
+    } finally {
+      setDeciding(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -56,7 +111,7 @@ export default function RunDetail() {
   if (!run) {
     return (
       <div className="container">
-        <div className="error">Run not found</div>
+        <div className="error">{error || "Run not found"}</div>
       </div>
     );
   }
@@ -64,10 +119,9 @@ export default function RunDetail() {
   return (
     <div className="container">
       <div className="header">
-        <h1>{run.title}</h1>
+        <h1>{run.title || "Untitled run"}</h1>
         <p>
-          <span className={`status-badge status-${run.status}`}>{run.status}</span>{" "}
-          {run.phase}
+          <span className={`status-badge status-${run.status}`}>{run.status}</span> {run.phase}
         </p>
       </div>
 
@@ -105,15 +159,32 @@ export default function RunDetail() {
         </table>
       </div>
 
+      {run.status === "suspended" && run.outline && (
+        <div className="card">
+          <h2>Outline v{run.outline.version}</h2>
+          <p>{run.outline.title}</p>
+          <ol>
+            {run.outline.chapters.map((chapter) => (
+              <li key={chapter.slug}>{chapter.title}</li>
+            ))}
+          </ol>
+          <div className="form-actions">
+            <button type="button" disabled={deciding} onClick={() => void decide("approved")}>
+              {deciding ? "Submitting..." : "Approve"}
+            </button>
+            <button type="button" disabled={deciding} onClick={() => void decide("rejected")}>
+              Reject
+            </button>
+          </div>
+        </div>
+      )}
+
       {run.status === "succeeded" && (
         <div className="card">
           <h2>Export</h2>
           <p>Download the generated tutorial as a Markdown bundle.</p>
-          <a
-            href={`/api/projects/${projectId}/exports/${runId}/markdown`}
-            download
-          >
-            <button>Download Markdown Bundle</button>
+          <a href={`/api/projects/${projectId}/exports/${runId}/markdown`} download>
+            <button type="button">Download Markdown Bundle</button>
           </a>
         </div>
       )}

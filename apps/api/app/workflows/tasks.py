@@ -11,8 +11,10 @@ from __future__ import annotations
 from typing import Any
 
 from app.db.session import session_scope
+from app.storage.content_store import build_content_store
 from app.worker import celery_app
 from app.workflows.checkpointing import build_checkpointer_provider
+from app.workflows.tutorial.generation import build_tutorial_nodes
 from app.workflows.tutorial.runner import RunOutcome, TutorialRunner
 
 
@@ -22,6 +24,8 @@ def build_runner(owner: str = "celery") -> TutorialRunner:
         provider=build_checkpointer_provider(),
         session_factory=session_scope,
         owner=owner,
+        store=build_content_store(),
+        nodes=build_tutorial_nodes(),
     )
 
 

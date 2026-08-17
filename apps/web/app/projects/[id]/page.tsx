@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { ApiError, apiGet } from "../../../lib/api";
+
 interface Project {
   id: string;
   name: string;
@@ -40,23 +42,22 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`/api/projects/${projectId}`),
-      fetch(`/api/projects/${projectId}/sources`),
-      fetch(`/api/projects/${projectId}/runs`),
+      apiGet<Project>(`/api/projects/${projectId}`),
+      apiGet<Source[]>(`/api/projects/${projectId}/sources`),
+      apiGet<Run[]>(`/api/projects/${projectId}/runs`),
     ])
-      .then(async ([projectResponse, sourcesResponse, runsResponse]) => {
-        if (projectResponse.status === 401) {
+      .then(([nextProject, nextSources, nextRuns]) => {
+        setProject(nextProject);
+        setSources(nextSources);
+        setRuns(nextRuns);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof ApiError && err.status === 401) {
           router.push("/login");
           return;
         }
-        if (!projectResponse.ok) {
-          throw new Error("Failed to load project");
-        }
-        setProject(await projectResponse.json());
-        setSources(await sourcesResponse.json());
-        setRuns(await runsResponse.json());
+        setError(err instanceof Error ? err.message : "Failed to load project");
       })
-      .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [projectId, router]);
 
@@ -71,7 +72,7 @@ export default function ProjectDetail() {
   if (!project) {
     return (
       <div className="container">
-        <div className="error">Project not found</div>
+        <div className="error">{error || "Project not found"}</div>
       </div>
     );
   }
@@ -89,6 +90,7 @@ export default function ProjectDetail() {
       <div className="nav">
         <Link href={`/projects/${projectId}/sources/new`}>Add Source</Link>
         <Link href={`/projects/${projectId}/runs/new`}>New Run</Link>
+        <Link href="/projects">All Projects</Link>
       </div>
 
       {error && <div className="error">{error}</div>}
@@ -137,9 +139,7 @@ export default function ProjectDetail() {
               {runs.map((run) => (
                 <tr key={run.id}>
                   <td>
-                    <span className={`status-badge status-${run.status}`}>
-                      {run.status}
-                    </span>
+                    <span className={`status-badge status-${run.status}`}>{run.status}</span>
                   </td>
                   <td>{run.phase}</td>
                   <td>{new Date(run.created_at).toLocaleString()}</td>
