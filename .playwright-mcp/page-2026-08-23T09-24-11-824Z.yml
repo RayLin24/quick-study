@@ -1,0 +1,48 @@
+- generic [active] [ref=f1e1]:
+  - banner [ref=f1e2]:
+    - link "Quick Study" [ref=f1e3] [cursor=pointer]:
+      - /url: /
+    - paragraph [ref=f1e4]: 把代码库变成可读教程
+  - main [ref=f1e5]:
+    - region [ref=f1e6]:
+      - heading "生成教程" [level=1] [ref=f1e7]
+      - generic [ref=f1e8]:
+        - group "来源" [ref=f1e9]:
+          - generic [ref=f1e11] [cursor=pointer]:
+            - radio "GitHub 仓库" [checked] [ref=f1e12]
+            - text: GitHub 仓库
+          - generic [ref=f1e13] [cursor=pointer]:
+            - radio "本机目录" [ref=f1e14]
+            - text: 本机目录
+        - generic [ref=f1e15]:
+          - generic [ref=f1e16]: 仓库 URL
+          - textbox "仓库 URL" [ref=f1e17]:
+            - /placeholder: https://github.com/owner/repo
+            - text: https://example.com/not-github
+        - generic [ref=f1e18]:
+          - generic [ref=f1e19]: 教程语言
+          - combobox "教程语言" [ref=f1e20]:
+            - option "中文" [selected]
+            - option "English"
+        - generic [ref=f1e21]:
+          - generic [ref=f1e22]: 项目名（可选）
+          - textbox "项目名（可选）" [ref=f1e23]:
+            - /placeholder: 默认从仓库或目录名推导
+        - generic [ref=f1e24]:
+          - generic [ref=f1e25]: GitHub Token（可选）
+          - textbox "GitHub Token（可选）" [ref=f1e26]:
+            - /placeholder: 私有仓库或避免限流时填写
+        - generic [ref=f1e27]:
+          - generic [ref=f1e28]: 核心抽象数量上限
+          - spinbutton "核心抽象数量上限" [ref=f1e29]: "10"
+        - paragraph [ref=f1e40]: 请填写有效的 GitHub 仓库 URL，例如 https://github.com/owner/repo
+        - button "开始生成" [ref=f1e30] [cursor=pointer]
+    - region [ref=f1e31]:
+      - heading "运行日志" [level=2] [ref=f1e32]
+      - paragraph [ref=f1e33]: 空闲
+  - region [ref=f1e35]:
+    - heading "已生成" [level=2] [ref=f1e36]
+    - list [ref=f1e37]:
+      - listitem [ref=f1e38]:
+        - link "_preview" [ref=f1e39] [cursor=pointer]:
+          - /url: /t/_preview

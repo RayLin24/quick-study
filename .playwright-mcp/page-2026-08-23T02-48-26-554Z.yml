@@ -1,0 +1,40 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - link "速学 Quick Study" [ref=e5] [cursor=pointer]:
+      - /url: /projects
+      - generic [ref=e6]: 速
+      - generic [ref=e7]:
+        - strong [ref=e8]: 速学
+        - generic [ref=e9]: Quick Study
+  - main [ref=e10]:
+    - generic [ref=e12]:
+      - heading "新建项目" [level=1] [ref=e13]
+      - generic [ref=e14]: 先设定教程的语言、读者水平和篇幅，再添加资料来源。
+    - generic [ref=e16]:
+      - generic [ref=e17]:
+        - generic [ref=e18]: 名称
+        - textbox "名称" [ref=e19]
+      - generic [ref=e20]:
+        - generic [ref=e21]: 标识
+        - textbox "标识" [ref=e22]
+        - paragraph [ref=e23]: 用于地址和导出文件名，建议用小写字母、数字和连字符。
+      - generic [ref=e24]:
+        - generic [ref=e25]: 输出语言
+        - combobox "输出语言" [ref=e26]:
+          - option "中文" [selected]
+          - option "英文"
+      - generic [ref=e27]:
+        - generic [ref=e28]: 读者水平
+        - combobox "读者水平" [ref=e29]:
+          - option "入门"
+          - option "进阶" [selected]
+          - option "深入"
+      - generic [ref=e30]:
+        - generic [ref=e31]: 篇幅
+        - combobox "篇幅" [ref=e32]:
+          - option "精简"
+          - option "标准" [selected]
+          - option "详尽"
+      - generic [ref=e33]:
+        - button "创建项目" [ref=e34] [cursor=pointer]
+        - button "取消" [ref=e35] [cursor=pointer]

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quick Study</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232563eb'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-size='16' fill='white' font-family='Arial'%3EQ%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">Quick Study</a>
+    <p class="tag">把代码库变成可读教程</p>
+  </header>
+
+  <main class="layout">
+    <section class="panel" aria-labelledby="generate-title">
+      <h1 id="generate-title">生成教程</h1>
+      <form id="job-form" novalidate>
+        <fieldset>
+          <legend>来源</legend>
+          <label class="choice">
+            <input type="radio" name="source_type" value="repo" checked>
+            GitHub 仓库
+          </label>
+          <label class="choice">
+            <input type="radio" name="source_type" value="dir">
+            本机目录
+          </label>
+        </fieldset>
+
+        <label class="field" data-for="repo">
+          <span>仓库 URL</span>
+          <input id="repo_url" name="repo_url" type="url" placeholder="https://github.com/owner/repo" autocomplete="off">
+        </label>
+
+        <label class="field" data-for="dir" hidden>
+          <span>本机目录路径</span>
+          <input id="local_dir" name="local_dir" type="text" placeholder="D:\code\my-project" autocomplete="off">
+        </label>
+
+        <label class="field">
+          <span>教程语言</span>
+          <select id="language" name="language">
+            <option value="Chinese" selected>中文</option>
+            <option value="english">English</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>项目名（可选）</span>
+          <input id="name" name="name" type="text" placeholder="默认从仓库或目录名推导" autocomplete="off">
+        </label>
+
+        <label class="field" data-for="repo">
+          <span>GitHub Token（可选）</span>
+          <input id="github_token" name="github_token" type="password" placeholder="私有仓库或避免限流时填写" autocomplete="off">
+        </label>
+
+        <label class="field">
+          <span>核心抽象数量上限</span>
+          <input id="max_abstractions" name="max_abstractions" type="number" min="1" max="20" value="10">
+        </label>
+
+        <p id="form-error" class="error" hidden></p>
+        <button type="submit" id="submit-btn">开始生成</button>
+      </form>
+    </section>
+
+    <section class="panel" aria-labelledby="log-title">
+      <h2 id="log-title">运行日志</h2>
+      <p id="job-status" class="status">空闲</p>
+      <pre id="log" class="log" tabindex="0" aria-live="polite"></pre>
+      <p id="result" class="result" hidden></p>
+    </section>
+  </main>
+
+  <section class="library" aria-labelledby="library-title">
+    <h2 id="library-title">已生成</h2>
+    <ul id="tutorial-list" class="cards">
+      {% for item in tutorials %}
+      <li>
+        <a href="/t/{{ item.name }}">{{ item.name }}</a>
+      </li>
+      {% else %}
+      <li class="empty">还没有教程。生成完成后会出现在这里。</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

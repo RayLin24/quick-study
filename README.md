@@ -1,209 +1,180 @@
-# Quick Study
+> 本仓库基于 [PocketFlow-Tutorial-Codebase-Knowledge](https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge) 落地。中文说明（项目做什么、如何启动、需要哪些配置）见 [项目说明书.md](./项目说明书.md)。
 
-Quick Study is a self-hosted tutorial-generation system. The repository currently contains
-the modular-monolith scaffold (a Next.js web process, a FastAPI control plane, a Celery
-worker, MySQL and Redis), the domain layer (the database schema and migrations, local account
-authentication, the idempotent run/step execution contract, content-addressed artifact
-storage and the keyword retrieval interface) and the resumable generation workflow: the
-LangGraph pipeline, its outline-approval interrupt and the MySQL checkpointer adapter. The
-workflow's model and ingestion nodes are still stubs, and the reviewer interface is not
-implemented yet.
+<h1 align="center">Turns Codebase into Easy Tutorial with AI</h1>
 
-## Repository layout
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+ <a href="https://discord.gg/hUHHE9Sa6T">
+    <img src="https://img.shields.io/discord/1346833819172601907?logo=discord&style=flat">
+</a>
+> *Ever stared at a new codebase written by others feeling completely lost? This tutorial shows you how to build an AI agent that analyzes GitHub repositories and creates beginner-friendly tutorials explaining exactly how the code works.*
 
-```text
-apps/
-  api/
-    alembic/           Migrations; 0001 creates the whole domain schema
-    app/
-      auth/            Argon2id passwords, sessions, CSRF, project authorisation
-      db/              Declarative base, portable column types, models, sessions
-      retrieval/       Stable search interface over the MySQL FULLTEXT indexes
-      runs/            Run state machine and the at-least-once step contract
-      storage/         SHA-256 content-addressed artifact store
-      workflows/       LangGraph generation graph and the checkpointer adapter
-  web/                 Next.js App Router application
-packages/
-  contracts/           Reserved for OpenAPI-generated frontend types
-  ts-analyzer/         Static JavaScript/TypeScript analysis, JSON out, spawned by the API
-  diagram-renderer/    Mermaid validation and sanitized SVG rendering, spawned by the API
-data/
-  artifacts/           SHA-256-addressed artifact payloads (contents are ignored)
-compose.yaml            Local container topology
-```
+<p align="center">
+  <img
+    src="./assets/banner.png" width="800"
+  />
+</p>
 
-## Docker Compose on Windows
+This is a tutorial project of [Pocket Flow](https://github.com/The-Pocket/PocketFlow), a 100-line LLM framework. It crawls GitHub repositories and builds a knowledge base from the code. It analyzes entire codebases to identify core abstractions and how they interact, and transforms complex code into beginner-friendly tutorials with clear visualizations.
 
-Prerequisites: Docker Desktop with Compose, Git, Node.js 20.9 or newer, Python 3.12 or newer,
-and `uv`.
 
-From PowerShell:
+- Check out the [book "Crack Any Codebase with AI"](https://www.manning.com/books/crack-any-codebase-with-ai) for more! 
+ 
+- Check out the [YouTube Development Tutorial](https://youtu.be/AFY67zOpbSo) for more!
 
-```powershell
-Copy-Item .env.example .env
-# Replace the two password placeholders in .env before starting services.
-docker compose up --build -d
-docker compose ps
-Invoke-RestMethod http://127.0.0.1:8000/health/live
-Invoke-WebRequest http://127.0.0.1:3000
-```
+- Check out the [Substack Post Tutorial](https://zacharyhuang.substack.com/p/ai-codebase-knowledge-builder-full) for more!
 
-Stop the stack without deleting persisted data:
+&nbsp;&nbsp;**🔸 🎉 Reached Hacker News Front Page** (April 2025) with >900 up‑votes:  [Discussion »](https://news.ycombinator.com/item?id=43739456)
 
-```powershell
-docker compose down
-```
 
-MySQL and Redis ports bind to `127.0.0.1` only. The API and worker containers run as the
-unprivileged `app` user, and the bound `data/artifacts` directory is the only writable path.
-Application secrets belong in the ignored `.env` file or a deployment secret store; never add
-them to the repository.
 
-## Local development
+## ⭐ Example Results for Popular GitHub Repositories!
 
-Install dependencies once:
+<p align="center">
+    <img
+      src="./assets/example.png" width="600"
+    />
+</p>
 
-```powershell
-uv sync --project apps/api --dev
-npm ci --prefix apps/web
-npm ci --prefix packages/ts-analyzer
-npm ci --prefix packages/diagram-renderer
-```
+🤯 All these tutorials are generated **entirely by AI** by crawling the GitHub repo!
 
-Start MySQL and Redis in containers:
+- [AutoGen Core](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/AutoGen%20Core) - Build AI teams that talk, think, and solve problems together like coworkers!
 
-```powershell
-Copy-Item .env.example .env
-docker compose up -d mysql redis
-```
+- [Browser Use](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/Browser%20Use) - Let AI surf the web for you, clicking buttons and filling forms like a digital assistant!
 
-Then run each process in a separate PowerShell terminal:
+- [Celery](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/Celery) - Supercharge your app with background tasks that run while you sleep!
 
-```powershell
-npm run dev:api
-npm run dev:worker
-npm run dev:web
-```
+- [Click](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/Click) - Turn Python functions into slick command-line tools with just a decorator!
 
-The API and the worker read the repository-root `.env` and resolve `data/artifacts` inside
-this checkout no matter which working directory they run from, so they always share one
-configuration and one artifact root. When `DATABASE_URL` is not supplied they
-compose `mysql://MYSQL_USER:MYSQL_PASSWORD@MYSQL_HOST:MYSQL_PORT/MYSQL_DATABASE` from the
-`.env` values. `REDIS_URL` and `ARTIFACTS_DIR` fall back to the published Compose port and
-the in-repo artifact root. The checked-in defaults contain no credentials.
+- [Codex](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/Codex) - Turn plain English into working code with this AI terminal wizard!
 
-## Database migrations
+- [Crawl4AI](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/Crawl4AI) - Train your AI to extract exactly what matters from any website!
 
-Alembic reads the same `.env` as the application, so no separate database configuration is
-needed:
+- [CrewAI](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/CrewAI) - Assemble a dream team of AI specialists to tackle impossible problems!
 
-```powershell
-npm run db:upgrade                       # apply every migration
-npm run db:history                       # show revisions and the current one
-npm run db:revision -- -m "add x"        # generate a revision from the models
-```
+- [DSPy](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/DSPy) - Build LLM apps like Lego blocks that optimize themselves!
 
-Revision `0001` creates the full domain schema: `users`, `sessions`, `projects`,
-`project_members`, `sources`, `snapshots`, `documents`, `chunks`, `symbols`, `edges`, `runs`,
-`steps`, `artifacts`, `outlines`, `chapters`, `claims`, `citations` and `approvals`, together
-with the four MySQL `FULLTEXT` indexes used for retrieval. Every table is InnoDB and utf8mb4.
-Generated revisions are formatted and linted by an Alembic post-write hook.
+- [FastAPI](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/FastAPI) - Create APIs at lightning speed with automatic docs that clients will love!
 
-## Focused checks
+- [Flask](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/Flask) - Craft web apps with minimal code that scales from prototype to production!
 
-```powershell
-npm run check:scaffold      # API and web smoke tests, linting, Compose validation
-npm run check:domain-auth   # API test suite and Python linting
-npm run check:workflow      # graph, runner and checkpointer contract tests, plus linting
-npm run check:packages      # type checks, builds and tests both analysis packages
-npm run check               # the scaffold checks plus the analysis packages
-```
+- [Google A2A](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/Google%20A2A) - The universal language that lets AI agents collaborate across borders!
 
-The API suite runs against SQLite and an in-process checkpointer by default, so it needs no
-services. Set `QUICKSTUDY_TEST_MYSQL_URL` to a scratch schema whose name contains `test` to
-additionally run the MySQL-only checks — migrations against real MySQL 8.4, `MATCH ...
-AGAINST` retrieval and the whole checkpointer contract. Those tests drop and recreate their
-schemas on every run and skip when the variable is unset. None of these commands runs an
-end-to-end tutorial-generation flow.
+- [LangGraph](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/LangGraph) - Design AI agents as flowcharts where each step remembers what happened before!
 
-## Generation workflow
+- [LevelDB](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/LevelDB) - Store data at warp speed with Google's engine that powers blockchains!
 
-The tutorial is produced by a LangGraph graph in
-[apps/api/app/workflows/tutorial](apps/api/app/workflows/tutorial):
-`discover → snapshot → parse → index → analyze → outline → human_interrupt → chapters →
-diagrams → validate → publish`. `human_interrupt` calls LangGraph's `interrupt()` and the
-run stays suspended on its own thread until a reviewer's decision arrives as
-`Command(resume=...)`; approval continues to `chapters` and rejection is the one step back
-the pipeline allows, straight to `outline` for another version.
+- [MCP Python SDK](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/MCP%20Python%20SDK) - Build powerful apps that communicate through an elegant protocol without sweating the details!
 
-Each phase's body is one field of `TutorialNodes`, so ingestion, retrieval, generation,
-diagrams and the quality gate each replace a function without touching the graph. The
-defaults are deterministic stubs that call no model and fetch nothing. Every node goes
-through the same wrapper: it claims a step by idempotency key before doing anything, so a
-node that already succeeded or is leased by another worker does nothing, and it records
-`pipeline_version`, `input_hash`, `prompt_hash`, `model`, `attempt`, tokens, cost and any
-error. A chapter a reviewer locked is never replaced by a regeneration.
+- [NumPy Core](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/NumPy%20Core) - Master the engine behind data science that makes Python as fast as C!
 
-Celery only wakes a run up. `app.workflows.tasks` takes an identifier, hands it to the
-runner and returns a status summary; the run's phase, attempts, cost and errors live in
-`runs` and `steps`, so a lost message costs latency and a duplicated one costs nothing.
-Each wake-up is itself a step, and a reviewer's decision is part of its key, so replaying an
-approval is refused while a different decision is new work.
+- [OpenManus](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/OpenManus) - Build AI agents with digital brains that think, learn, and use tools just like humans do!
 
-### MySQL checkpointer
+- [PocketFlow](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/PocketFlow) - 100-line LLM framework. Let Agents build Agents!
 
-LangGraph's first-party production checkpointer is the PostgreSQL one; MySQL is served by
-the community package `langgraph-checkpoint-mysql`. It is confined to
-[apps/api/app/workflows/checkpointing](apps/api/app/workflows/checkpointing) behind
-`CheckpointerProvider`, which owns the connection settings the package requires
-(`autocommit=True`, or `setup()` silently fails to persist its tables) and refuses to run on
-a server it was not tested on — MySQL 8.0.19 or newer, and older than 9.6, which dropped
-`MD5` from generated column expressions.
+- [Pydantic Core](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/Pydantic%20Core) - Validate data at rocket speed with just Python type hints!
 
-The tested version window for `langgraph`, `langgraph-checkpoint` and
-`langgraph-checkpoint-mysql`, along with the migration level the package should reach, is
-declared in `compatibility.py` and verified before the adapter touches a database, so an
-upgrade fails loudly instead of writing a schema nobody has exercised.
+- [Requests](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/Requests) - Talk to the internet in Python with code so simple it feels like cheating!
 
-`tests/test_checkpointer_contract.py` is what makes the dependency replaceable. It states
-what any backend has to do — initialisation and migration, concurrent writes, recovery after
-a hard kill, redelivery, interrupt and `Command(resume=...)`, and a database left at an
-older migration level — and runs it against every provider. Replacing the store means
-writing one provider and passing the same suite. Checkpoints hold execution state only, so
-losing the checkpoint schema costs progress, never facts.
+- [SmolaAgents](https://the-pocket.github.io/PocketFlow-Tutorial-Codebase-Knowledge/SmolaAgents) - Build tiny AI agents that punch way above their weight class!
 
-## Analysis packages
+- Showcase Your AI-Generated Tutorials in [Discussions](https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge/discussions)!
 
-Two Node packages do work that has no good Python equivalent. The API calls both as
-subprocesses, so their contract is a CLI plus a versioned JSON document rather than an import.
-Each ships its own JSON Schema through `--print-schema`, and each is documented in its own
-README.
+## 🚀 Getting Started
 
-[packages/ts-analyzer](packages/ts-analyzer) analyzes JavaScript and TypeScript with the
-TypeScript Compiler API and emits files, symbols, imports, dependencies and call edges. It never
-executes the repository it reads: the compiler host answers only from the collected sources plus
-TypeScript's bundled `lib.*.d.ts`, so resolution cannot reach `node_modules` or anything else on
-disk. Relationships that are not statically decidable — dynamic dispatch, computed members,
-reflection, callbacks — are reported as `unresolved` with a machine-readable reason instead of
-being guessed.
+1. Clone this repository
+   ```bash
+   git clone https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge
+   ```
 
-[packages/diagram-renderer](packages/diagram-renderer) validates a Mermaid source with
-`mermaid.parse()` and renders it with a pinned Mermaid at `securityLevel: "strict"`, then
-sanitizes the SVG: scripts, event handlers, embedded HTML and every non-fragment URL are removed.
-A failure at any stage returns `svg: null` with a diagnosable error, so a broken or unsafe
-diagram is never published.
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Both bound their work with overridable limits that are clamped by hard ceilings (file counts and
-sizes, input and output sizes, time budgets), and both write machine-readable JSON on failure.
+4. Set up LLM in [`utils/call_llm.py`](./utils/call_llm.py) by providing credentials. To do so, you can put the values in a `.env` file. By default, you can use the AI Studio key with this client for Gemini Pro 2.5 by setting the `GEMINI_API_KEY` environment variable. If you want to use another LLM, you can set the `LLM_PROVIDER` environment variable (e.g. `XAI`), and then set the model, url, and API key (e.g. `XAI_MODEL`, `XAI_URL`,`XAI_API_KEY`). If using Ollama, the url is `http://localhost:11434/` and the API key can be omitted.
+   You can use your own models. We highly recommend the latest models with thinking capabilities (Claude 3.7 with thinking, O1). You can verify that it is correctly set up by running:
+   ```bash
+   python utils/call_llm.py
+   ```
 
-## Authentication model
+5. Generate a complete codebase tutorial by running the main script:
+    ```bash
+    # Analyze a GitHub repository
+    python main.py --repo https://github.com/username/repo --include "*.py" "*.js" --exclude "tests/*" --max-size 50000
 
-Local accounts only. The first administrator is created once through the bootstrap flow,
-which a unique `users.bootstrap_slot` enforces at the database level rather than with a
-read-then-write check. Passwords are Argon2id (64 MiB, 3 iterations, 4 lanes) and are
-re-hashed on login when those parameters change. A session is an opaque random token
-delivered in an HttpOnly, SameSite=Lax, Secure cookie; only its SHA-256 fingerprint is
-stored, so a database dump cannot be replayed. State-changing requests must also present the
-session's CSRF token in the `X-CSRF-Token` header. Project access is resolved from ownership,
-`project_members` or deployment-administrator status, and a caller without access gets 404
-rather than 403 so project ids cannot be enumerated.
+    # Or, analyze a local directory
+    python main.py --dir /path/to/your/codebase --include "*.py" --exclude "*test*"
+
+    # Or, generate a tutorial in Chinese
+    python main.py --repo https://github.com/username/repo --language "Chinese"
+    ```
+
+    - `--repo` or `--dir` - Specify either a GitHub repo URL or a local directory path (required, mutually exclusive)
+    - `-n, --name` - Project name (optional, derived from URL/directory if omitted)
+    - `-t, --token` - GitHub token (or set GITHUB_TOKEN environment variable)
+    - `-o, --output` - Output directory (default: ./output)
+    - `-i, --include` - Files to include (e.g., "`*.py`" "`*.js`")
+    - `-e, --exclude` - Files to exclude (e.g., "`tests/*`" "`docs/*`")
+    - `-s, --max-size` - Maximum file size in bytes (default: 100KB)
+    - `--language` - Language for the generated tutorial (default: "english")
+    - `--max-abstractions` - Maximum number of abstractions to identify (default: 10)
+    - `--no-cache` - Disable LLM response caching (default: caching enabled)
+
+The application will crawl the repository, analyze the codebase structure, generate tutorial content in the specified language, and save the output in the specified directory (default: ./output).
+
+
+<details>
+ 
+<summary> 🐳 <b>Running with Docker</b> </summary>
+
+To run this project in a Docker container, you'll need to pass your API keys as environment variables. 
+
+1. Build the Docker image
+   ```bash
+   docker build -t pocketflow-app .
+   ```
+
+2. Run the container
+
+   You'll need to provide your `GEMINI_API_KEY` for the LLM to function. If you're analyzing private GitHub repositories or want to avoid rate limits, also provide your `GITHUB_TOKEN`.
+   
+   Mount a local directory to `/app/output` inside the container to access the generated tutorials on your host machine.
+   
+   **Example for analyzing a public GitHub repository:**
+   
+   ```bash
+   docker run -it --rm \
+     -e GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE" \
+     -v "$(pwd)/output_tutorials":/app/output \
+     pocketflow-app --repo https://github.com/username/repo
+   ```
+   
+   **Example for analyzing a local directory:**
+   
+   ```bash
+   docker run -it --rm \
+     -e GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE" \
+     -v "/path/to/your/local_codebase":/app/code_to_analyze \
+     -v "$(pwd)/output_tutorials":/app/output \
+     pocketflow-app --dir /app/code_to_analyze
+   ```
+</details>
+
+## 💡 Development Tutorial
+
+- I built using [**Agentic Coding**](https://zacharyhuang.substack.com/p/agentic-coding-the-most-fun-way-to), the fastest development paradigm, where humans simply [design](docs/design.md) and agents [code](flow.py).
+
+- The secret weapon is [Pocket Flow](https://github.com/The-Pocket/PocketFlow), a 100-line LLM framework that lets Agents (e.g., Cursor AI) build for you
+
+- Check out the Step-by-step YouTube development tutorial:
+
+<br>
+<div align="center">
+  <a href="https://youtu.be/AFY67zOpbSo" target="_blank">
+    <img src="./assets/youtube_thumbnail.png" width="500" alt="Pocket Flow Codebase Tutorial" style="cursor: pointer;">
+  </a>
+</div>
+<br>
+
+
+

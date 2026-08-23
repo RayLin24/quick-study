@@ -1,0 +1,28 @@
+- generic [active] [ref=f3e1]:
+  - banner [ref=f3e2]:
+    - link "Quick Study" [ref=f3e3] [cursor=pointer]:
+      - /url: /
+    - navigation "面包屑" [ref=f3e4]:
+      - link "生成" [ref=f3e5] [cursor=pointer]:
+        - /url: /
+      - generic [ref=f3e6]: /
+      - link "_preview" [ref=f3e7] [cursor=pointer]:
+        - /url: /t/_preview
+  - generic [ref=f3e8]:
+    - complementary [ref=f3e9]:
+      - heading "章节" [level=2] [ref=f3e10]
+      - list [ref=f3e11]:
+        - listitem [ref=f3e12]:
+          - link "目录" [ref=f3e13] [cursor=pointer]:
+            - /url: /t/_preview
+        - listitem [ref=f3e14]:
+          - link "01 example" [ref=f3e15] [cursor=pointer]:
+            - /url: /t/_preview/01_example.md
+    - article [ref=f3e16]:
+      - heading "示例章节" [level=1] [ref=f3e17]
+      - paragraph [ref=f3e18]: 这一章用来确认章节跳转和正文排版。
+      - paragraph [ref=f3e19]:
+        - text: 回到
+        - link "目录" [ref=f3e20] [cursor=pointer]:
+          - /url: /t/_preview/index.md
+        - text: 。

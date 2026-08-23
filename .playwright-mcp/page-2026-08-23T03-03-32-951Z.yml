@@ -1,0 +1,39 @@
+- generic [active] [ref=f9e1]:
+  - button "Open Next.js Dev Tools" [ref=f9e24] [cursor=pointer]
+  - alert [ref=f9e28]
+  - generic [ref=f9e29]:
+    - banner [ref=f9e30]:
+      - link "速学 Quick Study" [ref=f9e32] [cursor=pointer]:
+        - /url: /projects
+        - generic [ref=f9e33]: 速
+        - generic [ref=f9e34]:
+          - strong [ref=f9e35]: 速学
+          - generic [ref=f9e36]: Quick Study
+    - main [ref=f9e37]:
+      - generic [ref=f9e38]:
+        - generic [ref=f9e39]:
+          - heading "项目" [level=1] [ref=f9e40]
+          - generic [ref=f9e41]: 管理教程生成项目，从文档和仓库整理成可核验的讲义。
+        - link "新建项目" [ref=f9e43] [cursor=pointer]:
+          - /url: /projects/new
+      - list [ref=f9e44]:
+        - listitem [ref=f9e45]:
+          - link "DSH E2E DeepSeek Test dsh-e2e-deepseek · 中文" [ref=f9e46] [cursor=pointer]:
+            - /url: /projects/168a5e4c96b24713898ce28bfed881d4
+            - strong [ref=f9e47]: DSH E2E DeepSeek Test
+            - generic [ref=f9e48]: dsh-e2e-deepseek · 中文
+        - listitem [ref=f9e49]:
+          - link "HTTP 状态码精简教程 http-status-flash-20260823104622 · 中文" [ref=f9e50] [cursor=pointer]:
+            - /url: /projects/bc38f140da334273b466fe00a3dbb3f2
+            - strong [ref=f9e51]: HTTP 状态码精简教程
+            - generic [ref=f9e52]: http-status-flash-20260823104622 · 中文
+        - listitem [ref=f9e53]:
+          - link "UI 表单探针 ui-form-probe-0823 · 中文" [ref=f9e54] [cursor=pointer]:
+            - /url: /projects/887fccb1cf1046fdbba18dc5a25e0169
+            - strong [ref=f9e55]: UI 表单探针
+            - generic [ref=f9e56]: ui-form-probe-0823 · 中文
+        - listitem [ref=f9e57]:
+          - link "LangChain 教程 langchain-tutorial · 中文" [ref=f9e58] [cursor=pointer]:
+            - /url: /projects/6fa235b103234a8a9648dfe9bf6cc1b4
+            - strong [ref=f9e59]: LangChain 教程
+            - generic [ref=f9e60]: langchain-tutorial · 中文

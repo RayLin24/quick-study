@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} · Quick Study</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%232563eb'/%3E%3Ctext x='16' y='22' text-anchor='middle' font-size='16' fill='white' font-family='Arial'%3EQ%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css">
+</head>
+<body class="reading">
+  <header class="top">
+    <a class="brand" href="/">Quick Study</a>
+    <nav class="crumb" aria-label="面包屑">
+      <a href="/">生成</a>
+      <span aria-hidden="true">/</span>
+      <a href="/t/{{ tutorial_name }}">{{ tutorial_name }}</a>
+    </nav>
+  </header>
+
+  <div class="reader">
+    <aside>
+      <h2>学习路线</h2>
+      <ol>
+        {% for chapter in chapters %}
+        <li>
+          <a href="{{ chapter.href }}" {% if chapter.filename == filename %}aria-current="page"{% endif %}>
+            {% if chapter.filename != "index.md" and chapter.number %}
+            <span class="toc-num">{{ chapter.number }}</span>
+            {% endif %}
+            <span>{{ chapter.title }}</span>
+          </a>
+        </li>
+        {% endfor %}
+      </ol>
+    </aside>
+    <article class="prose">
+      {{ body | safe }}
+      <nav class="pager" aria-label="相邻章节">
+        {% if prev_chapter %}
+        <a class="pager-link" href="{{ prev_chapter.href }}">
+          <span class="pager-kicker">上一课</span>
+          <span>{{ prev_chapter.title }}</span>
+        </a>
+        {% else %}
+        <span></span>
+        {% endif %}
+        {% if next_chapter %}
+        <a class="pager-link pager-link-next" href="{{ next_chapter.href }}">
+          <span class="pager-kicker">下一课</span>
+          <span>{{ next_chapter.title }}</span>
+        </a>
+        {% endif %}
+      </nav>
+    </article>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+  <script>hljs.highlightAll();</script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: "strict",
+      theme: "base",
+      themeVariables: {
+        fontFamily: "IBM Plex Sans, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif",
+        primaryColor: "#DBEAFE",
+        primaryTextColor: "#1E3A5F",
+        primaryBorderColor: "#2563EB",
+        lineColor: "#0D9488",
+        secondaryColor: "#CCFBF1",
+        tertiaryColor: "#FEF3C7",
+        background: "#FFF8EF",
+      },
+    });
+  </script>
+</body>
+</html>

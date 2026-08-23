@@ -1,0 +1,43 @@
+- generic [ref=f11e1]:
+  - button "Open Next.js Dev Tools" [ref=f11e17] [cursor=pointer]
+  - alert [ref=f11e21]
+  - generic [ref=f11e22]:
+    - banner [ref=f11e23]:
+      - link "速学 Quick Study" [ref=f11e25] [cursor=pointer]:
+        - /url: /projects
+        - generic [ref=f11e26]: 速
+        - generic [ref=f11e27]:
+          - strong [ref=f11e28]: 速学
+          - generic [ref=f11e29]: Quick Study
+    - main [ref=f11e30]:
+      - generic [ref=f11e32]:
+        - heading "LangChain 教程" [level=1] [ref=f11e33]
+        - generic [ref=f11e34]:
+          - generic [ref=f11e35]: 已完成
+          - text: 发布成稿
+      - generic [ref=f11e36]:
+        - heading "详情" [level=2] [ref=f11e37]
+        - table [ref=f11e39]:
+          - rowgroup [ref=f11e40]:
+            - row [ref=f11e41]:
+              - rowheader "状态" [ref=f11e42]
+              - cell "已完成" [ref=f11e43]
+            - row [ref=f11e45]:
+              - rowheader "阶段" [ref=f11e46]
+              - cell "发布成稿" [ref=f11e47]
+            - row [ref=f11e48]:
+              - rowheader "创建时间" [ref=f11e49]
+              - cell "2026/08/23 11:00" [ref=f11e50]
+            - row [ref=f11e51]:
+              - rowheader "开始时间" [ref=f11e52]
+              - cell "2026/08/23 11:00" [ref=f11e53]
+            - row [ref=f11e54]:
+              - rowheader "结束时间" [ref=f11e55]
+              - cell "2026/08/23 11:10" [ref=f11e56]
+      - generic [ref=f11e57]:
+        - heading "导出" [level=2] [ref=f11e58]
+        - paragraph [ref=f11e59]: 下载这次生成的 Markdown 教程包。
+        - link "下载 Markdown 包" [active] [ref=f11e61] [cursor=pointer]:
+          - /url: /api/projects/6fa235b103234a8a9648dfe9bf6cc1b4/exports/7f76047a7b104e33ac448515a3eb306e/markdown
+      - link "返回项目" [ref=f11e62] [cursor=pointer]:
+        - /url: /projects/6fa235b103234a8a9648dfe9bf6cc1b4

@@ -1,0 +1,12 @@
+- generic [active] [ref=f11e1]:
+  - generic [ref=f11e2]:
+    - banner [ref=f11e3]:
+      - link "速学 Quick Study" [ref=f11e5] [cursor=pointer]:
+        - /url: /projects
+        - generic [ref=f11e6]: 速
+        - generic [ref=f11e7]:
+          - strong [ref=f11e8]: 速学
+          - generic [ref=f11e9]: Quick Study
+    - main [ref=f11e10]:
+      - status [ref=f11e11]: 正在加载生成记录…
+  - button "Open Next.js Dev Tools" [ref=f11e17] [cursor=pointer]
