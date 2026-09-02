@@ -80,6 +80,7 @@ def main():
         "include_patterns": set(args.include) if args.include else DEFAULT_INCLUDE_PATTERNS,
         "exclude_patterns": set(args.exclude) if args.exclude else DEFAULT_EXCLUDE_PATTERNS,
         "max_file_size": args.max_size,
+        "include_specified": bool(args.include),
 
         # Add language for multi-language support
         "language": args.language,

@@ -33,6 +33,9 @@ class JobIn(BaseModel):
     name: str = ""
     github_token: str = ""
     max_abstractions: int = Field(default=10, ge=1, le=20)
+    include: str = ""
+    exclude: str = ""
+    max_size: int | None = Field(default=None, ge=1)
 
 
 def create_app(
@@ -70,8 +73,8 @@ def create_app(
         return {"items": list_tutorials(output)}
 
     @app.get("/api/jobs/current")
-    def api_current_job():
-        return manager.snapshot()
+    def api_current_job(after: int | None = None):
+        return manager.snapshot(after=after)
 
     @app.post("/api/jobs")
     def api_start_job(body: JobIn):
@@ -82,20 +85,31 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.post("/api/jobs/current/cancel")
+    def api_cancel_job():
+        try:
+            return manager.cancel()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/api/jobs/current/events")
-    async def api_job_events():
+    async def api_job_events(after: int = 0):
         async def generate():
-            last = 0
+            last = max(0, after)
+            last_beat = 0.0
             while True:
-                snap = manager.snapshot()
+                snap = manager.snapshot(after=last)
                 logs = snap.get("logs") or []
-                if last < len(logs):
-                    for line in logs[last:]:
-                        yield f"data: {json.dumps({'type': 'log', 'line': line}, ensure_ascii=False)}\n\n"
-                    last = len(logs)
+                last = snap.get("log_cursor", last)
+                for line in logs:
+                    yield f"data: {json.dumps({'type': 'log', 'line': line}, ensure_ascii=False)}\n\n"
                 if snap["status"] != "running":
-                    yield f"data: {json.dumps({'type': 'done', 'status': snap['status'], 'output_name': snap.get('output_name'), 'error': snap.get('error')}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'done', 'status': snap['status'], 'output_name': snap.get('output_name'), 'error': snap.get('error'), 'file_count': snap.get('file_count'), 'map_mode': snap.get('map_mode')}, ensure_ascii=False)}\n\n"
                     break
+                now = asyncio.get_event_loop().time()
+                if now - last_beat >= 5:
+                    last_beat = now
+                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
                 await asyncio.sleep(0.35)
 
         return StreamingResponse(generate(), media_type="text/event-stream")
@@ -127,7 +141,11 @@ def create_app(
                 "title": title,
                 "tutorial_name": tutorial_name,
                 "filename": filename,
-                "body": markdown_to_html(text, tutorial_name),
+                "body": markdown_to_html(
+                    text,
+                    tutorial_name,
+                    cover=filename == "index.md",
+                ),
                 "chapters": chapters,
                 "prev_chapter": prev_chapter,
                 "next_chapter": next_chapter,

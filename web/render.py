@@ -131,7 +131,7 @@ def _escape_raw_html_outside_code(text: str) -> str:
     return prepared
 
 
-def markdown_to_html(text: str, tutorial_name: str) -> str:
+def markdown_to_html(text: str, tutorial_name: str, *, cover: bool = False) -> str:
     if text.startswith("---"):
         text = FRONT_MATTER.sub("", text, count=1)
     placeholders: list[str] = []
@@ -167,8 +167,9 @@ def markdown_to_html(text: str, tutorial_name: str) -> str:
     body = TABLE_RE.sub(lambda match: f'<div class="table-wrap">{match.group(0)}</div>', body)
     body = IMG_RE.sub(_promote_image, body)
     body = re.sub(r"(</h1>\s*)<p>", r'\1<p class="lead">', body, count=1)
-    cover = f'<figure class="cover">{build_cover_svg(chapter_label("index.md", heading))}</figure>'
-    body = H1_RE.sub(lambda match: f"{match.group(0)}\n{cover}", body, count=1)
+    if cover:
+        cover_html = f'<figure class="cover">{build_cover_svg(chapter_label("index.md", heading))}</figure>'
+        body = H1_RE.sub(lambda match: f"{match.group(0)}\n{cover_html}", body, count=1)
     return body
 
 

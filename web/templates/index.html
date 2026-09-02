@@ -30,8 +30,8 @@
         </fieldset>
 
         <label class="field" data-for="repo">
-          <span>仓库 URL</span>
-          <input id="repo_url" name="repo_url" type="url" placeholder="https://github.com/owner/repo" autocomplete="off">
+          <span>仓库 URL（可用 /tree/分支/路径，分支名可含 /）</span>
+          <input id="repo_url" name="repo_url" type="url" placeholder="https://github.com/owner/repo 或 …/tree/release/1.0/src" autocomplete="off">
         </label>
 
         <label class="field" data-for="dir" hidden>
@@ -62,8 +62,26 @@
           <input id="max_abstractions" name="max_abstractions" type="number" min="1" max="20" value="10">
         </label>
 
+        <label class="field">
+          <span>包含文件（include，空格或逗号分隔）</span>
+          <input id="include" name="include" type="text" placeholder="*.py *.md" autocomplete="off">
+        </label>
+
+        <label class="field">
+          <span>排除文件（exclude）</span>
+          <input id="exclude" name="exclude" type="text" placeholder="tests/* docs/*" autocomplete="off">
+        </label>
+
+        <label class="field">
+          <span>单文件大小上限（字节）</span>
+          <input id="max_size" name="max_size" type="number" min="1" placeholder="100000">
+        </label>
+
         <p id="form-error" class="error" hidden></p>
-        <button type="submit" id="submit-btn">开始生成</button>
+        <div class="actions">
+          <button type="submit" id="submit-btn">开始生成</button>
+          <button type="button" id="cancel-btn" hidden>取消任务</button>
+        </div>
       </form>
     </section>
 

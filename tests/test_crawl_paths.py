@@ -4,11 +4,66 @@ import pytest
 
 from utils.crawl_github_files import (
     DownloadIncompleteError,
+    GitHubCrawlError,
+    candidate_tree_splits,
+    crawl_github_files,
+    github_http_error,
+    parse_github_http_url,
     path_under_base,
     raise_if_downloads_incomplete,
     request_get,
+    resolve_tree_ref,
     sort_files,
 )
+
+
+def test_parse_tree_url_and_slash_branch():
+    owner, repo, remainder = parse_github_http_url(
+        "https://github.com/owner/repo/tree/release/1.0/src"
+    )
+    assert (owner, repo, remainder) == ("owner", "repo", "release/1.0/src")
+    ref, path = resolve_tree_ref(remainder, ["main", "release/1.0"])
+    assert ref == "release/1.0"
+    assert path == "src"
+
+
+def test_parse_plain_repo_url():
+    assert parse_github_http_url("https://github.com/owner/repo") == ("owner", "repo", None)
+
+
+def test_candidate_splits_prefer_slash_branch_then_shorter_prefixes():
+    splits = candidate_tree_splits("release/1.0/src", ["main"])
+    assert splits[0] == ("release/1.0/src", "")
+    assert ("release/1.0", "src") in splits
+    assert ("release", "1.0/src") in splits
+    known = candidate_tree_splits("release/1.0/src", ["main", "release/1.0"])
+    assert known[0] == ("release/1.0", "src")
+
+
+def test_github_404_is_human_readable():
+    text = github_http_error(404, token=None, owner="o", repo="r")
+    assert "QUICK_STUDY_ERROR:" in text
+    assert "404" in text
+    assert "GITHUB_TOKEN" in text
+
+
+def test_invalid_url_raises():
+    with pytest.raises(GitHubCrawlError, match="QUICK_STUDY_ERROR"):
+        parse_github_http_url("https://example.com/x")
+
+
+def test_tree_url_never_returns_none(monkeypatch):
+    missing = Mock(status_code=404, text="Not Found", headers={}, json=lambda: {"message": "Not Found"})
+    monkeypatch.setattr(
+        "utils.crawl_github_files.requests.get",
+        Mock(return_value=missing),
+    )
+    result = crawl_github_files("https://github.com/owner/missing/tree/release/1.0/src")
+    assert result is not None
+    assert isinstance(result.get("files"), dict)
+    assert result["files"] == {}
+    assert result.get("stats", {}).get("error")
+    assert "QUICK_STUDY_ERROR:" in result["stats"]["error"]
 
 
 def test_path_under_base_rejects_sibling_directories():

@@ -1,24 +1,52 @@
 from __future__ import annotations
 
+import inspect
+import json
 import os
 import re
+import signal
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
+from utils.errors import format_error
+
 GITHUB_REPO_RE = re.compile(
-    r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?/?$",
+    r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+    r"(?:\.git)?(?:/tree/[^?\s#]+)?/?$",
     re.IGNORECASE,
 )
 COMPLETE_RE = re.compile(r"Tutorial generation complete! Files are in:\s*(.+)\s*$")
+STATS_RE = re.compile(
+    r"QUICK_STUDY_STATS:\s*file_count=(?P<file_count>\d+)\s+map_mode=(?P<map_mode>\S+)"
+)
+LOG_RING = int(os.getenv("JOB_LOG_RING", "2000"))
+DEFAULT_JOB_TIMEOUT = float(os.getenv("JOB_TIMEOUT_SECONDS", "3600"))
 
-Runner = Callable[[list[str], Callable[[str], None], Path], int]
+Runner = Callable[..., int]
 
 
 class JobBusyError(Exception):
     pass
+
+
+class JobCancelled(Exception):
+    pass
+
+
+def _split_patterns(raw) -> Optional[list[str]]:
+    if raw is None:
+        return None
+    if isinstance(raw, (list, tuple, set)):
+        items = [str(item).strip() for item in raw if str(item).strip()]
+        return items or None
+    text = str(raw).strip()
+    if not text:
+        return None
+    return [part.strip() for part in re.split(r"[\s,]+", text) if part.strip()]
 
 
 def validate_start_request(payload: dict) -> dict:
@@ -26,25 +54,58 @@ def validate_start_request(payload: dict) -> dict:
     language = str(payload.get("language") or "Chinese").strip() or "Chinese"
     name = str(payload.get("name") or "").strip() or None
     token = str(payload.get("github_token") or "").strip() or None
+    include = _split_patterns(payload.get("include"))
+    exclude = _split_patterns(payload.get("exclude"))
     try:
         max_abstractions = int(payload.get("max_abstractions") or 10)
     except (TypeError, ValueError) as exc:
         raise ValueError("max_abstractions 必须是整数") from exc
     if max_abstractions < 1 or max_abstractions > 20:
         raise ValueError("max_abstractions 范围是 1–20")
+    max_size = payload.get("max_size")
+    if max_size in ("", None):
+        max_size = None
+    else:
+        try:
+            max_size = int(max_size)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("max_size 必须是整数") from exc
+        if max_size < 1:
+            raise ValueError("max_size 必须大于 0")
+
+    timeout = payload.get("timeout")
+    if timeout in ("", None):
+        timeout_seconds = DEFAULT_JOB_TIMEOUT
+    else:
+        try:
+            timeout_seconds = float(timeout)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("timeout 必须是数字") from exc
+
+    common = {
+        "language": language,
+        "name": name,
+        "github_token": token,
+        "max_abstractions": max_abstractions,
+        "include": include,
+        "exclude": exclude,
+        "max_size": max_size,
+        "include_specified": bool(include),
+        "timeout": timeout_seconds,
+    }
 
     if source_type == "repo":
         repo_url = str(payload.get("repo_url") or "").strip()
         if not GITHUB_REPO_RE.match(repo_url):
-            raise ValueError("请填写有效的 GitHub 仓库 URL，例如 https://github.com/owner/repo")
+            raise ValueError(
+                "请填写有效的 GitHub 仓库 URL，例如 https://github.com/owner/repo "
+                "或 https://github.com/owner/repo/tree/branch/path"
+            )
         return {
             "source_type": "repo",
             "repo_url": repo_url.rstrip("/"),
             "local_dir": None,
-            "language": language,
-            "name": name,
-            "github_token": token,
-            "max_abstractions": max_abstractions,
+            **common,
         }
 
     if source_type == "dir":
@@ -56,10 +117,7 @@ def validate_start_request(payload: dict) -> dict:
             "source_type": "dir",
             "repo_url": None,
             "local_dir": str(path.resolve()),
-            "language": language,
-            "name": name,
-            "github_token": token,
-            "max_abstractions": max_abstractions,
+            **common,
         }
 
     raise ValueError("请选择 GitHub 仓库或本地目录")
@@ -81,15 +139,48 @@ def build_command(
     cmd += ["--language", data["language"], "--output", str(output_dir)]
     if data["name"]:
         cmd += ["--name", data["name"]]
-    if data["github_token"]:
-        cmd += ["--token", data["github_token"]]
+    # Token stays in the child environment, never on argv.
+    if data["include"]:
+        cmd += ["--include", *data["include"]]
+    if data["exclude"]:
+        cmd += ["--exclude", *data["exclude"]]
+    if data["max_size"]:
+        cmd += ["--max-size", str(data["max_size"])]
     cmd += ["--max-abstractions", str(data["max_abstractions"])]
     return cmd
 
 
-def subprocess_runner(cmd: list[str], on_line: Callable[[str], None], cwd: Path) -> int:
+def kill_process_group(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.terminate()
+        except OSError:
+            return
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            try:
+                proc.kill()
+            except OSError:
+                pass
+        proc.wait(timeout=3)
+
+
+def subprocess_runner(cmd: list[str], on_line: Callable[[str], None], cwd: Path, job: Optional["Job"] = None) -> int:
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
+    token = None
+    if job is not None:
+        token = job.payload.get("github_token")
+    if token:
+        env["GITHUB_TOKEN"] = token
     proc = subprocess.Popen(
         cmd,
         cwd=str(cwd),
@@ -99,43 +190,112 @@ def subprocess_runner(cmd: list[str], on_line: Callable[[str], None], cwd: Path)
         encoding="utf-8",
         errors="replace",
         env=env,
+        start_new_session=True,
     )
+    if job is not None:
+        job.proc = proc
     assert proc.stdout is not None
-    for line in proc.stdout:
-        on_line(line.rstrip("\n"))
-    return proc.wait()
+    deadline = None
+    if job is not None and job.timeout and job.timeout > 0:
+        deadline = time.monotonic() + job.timeout
+    try:
+        for line in proc.stdout:
+            if job is not None and job.cancelled:
+                kill_process_group(proc)
+                break
+            if deadline is not None and time.monotonic() > deadline:
+                kill_process_group(proc)
+                on_line(format_error(f"job timed out after {job.timeout:.0f}s"))
+                break
+            on_line(line.rstrip("\n"))
+        code = proc.wait()
+        if job is not None and job.cancelled:
+            raise JobCancelled("任务已取消")
+        if deadline is not None and proc.returncode not in (0, None) and job is not None and not job.cancelled:
+            if "timed out" in "\n".join(job.logs[-5:]):
+                return code if code is not None else 124
+        return code
+    finally:
+        if proc.poll() is None:
+            kill_process_group(proc)
 
 
 class Job:
-    def __init__(self, payload: dict):
+    def __init__(self, payload: dict, timeout: float):
         self.id = uuid.uuid4().hex[:12]
         self.payload = payload
         self.status = "running"
         self.logs: list[str] = []
+        self.log_start = 0
+        self.log_end = 0
         self.error: Optional[str] = None
         self.output_name: Optional[str] = None
+        self.file_count: Optional[int] = None
+        self.map_mode: Optional[bool] = None
+        self.timeout = timeout
+        self.cancelled = False
+        self.proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
 
     def append_log(self, line: str) -> None:
         with self._lock:
             self.logs.append(line)
+            self.log_end += 1
+            if len(self.logs) > LOG_RING:
+                drop = len(self.logs) - LOG_RING
+                del self.logs[:drop]
+                self.log_start += drop
+            match = STATS_RE.search(line)
+            if match:
+                self.file_count = int(match.group("file_count"))
+                flag = match.group("map_mode").lower()
+                if flag != "pending":
+                    self.map_mode = flag in ("true", "1", "yes")
+
+    def request_cancel(self) -> None:
+        self.cancelled = True
+        if self.proc is not None:
+            kill_process_group(self.proc)
 
     def finish(self, *, success: bool, output_name: Optional[str] = None, error: Optional[str] = None) -> None:
         with self._lock:
-            self.status = "succeeded" if success else "failed"
+            if success:
+                self.status = "succeeded"
+            elif self.cancelled:
+                self.status = "cancelled"
+            else:
+                self.status = "failed"
             self.output_name = output_name
-            self.error = error
+            self.error = format_error(error) if error else error
 
-    def snapshot(self) -> dict:
+    def snapshot(self, after: Optional[int] = None) -> dict:
         with self._lock:
+            if after is None or after < self.log_start:
+                lines = list(self.logs)
+                cursor_from = self.log_start
+            else:
+                offset = after - self.log_start
+                lines = list(self.logs[offset:])
+                cursor_from = after
             return {
                 "id": self.id,
                 "status": self.status,
-                "logs": list(self.logs),
+                "logs": lines,
+                "log_start": self.log_start,
+                "log_cursor": self.log_end,
+                "log_from": cursor_from,
                 "error": self.error,
                 "output_name": self.output_name,
+                "file_count": self.file_count,
+                "map_mode": self.map_mode,
                 "source_type": self.payload.get("source_type"),
             }
+
+    def persist_payload(self) -> dict:
+        data = {k: v for k, v in self.payload.items() if k != "github_token"}
+        snap = self.snapshot()
+        snap["payload"] = data
+        return snap
 
 
 class JobManager:
@@ -156,12 +316,23 @@ class JobManager:
         self._lock = threading.Lock()
         self._job: Optional[Job] = None
         self._thread: Optional[threading.Thread] = None
+        self.state_path = self.output_dir / "current.json"
 
-    def snapshot(self) -> dict:
+    def snapshot(self, after: Optional[int] = None) -> dict:
         with self._lock:
             if self._job is None:
-                return {"status": "idle", "logs": [], "error": None, "output_name": None, "id": None}
-            return self._job.snapshot()
+                return {
+                    "status": "idle",
+                    "logs": [],
+                    "error": None,
+                    "output_name": None,
+                    "id": None,
+                    "log_start": 0,
+                    "log_cursor": 0,
+                    "file_count": None,
+                    "map_mode": None,
+                }
+            return self._job.snapshot(after=after)
 
     def start(self, payload: dict) -> dict:
         data = validate_start_request(payload)
@@ -174,10 +345,19 @@ class JobManager:
         with self._lock:
             if self._job is not None and self._job.status == "running":
                 raise JobBusyError("已有任务正在运行")
-            job = Job(data)
+            job = Job(data, timeout=data["timeout"])
             self._job = job
             self._thread = threading.Thread(target=self._run, args=(job, cmd), daemon=True)
             self._thread.start()
+        self._persist(job)
+        return job.snapshot()
+
+    def cancel(self) -> dict:
+        with self._lock:
+            job = self._job
+            if job is None or job.status != "running":
+                raise ValueError("当前没有运行中的任务")
+            job.request_cancel()
         return job.snapshot()
 
     def wait(self, timeout: Optional[float] = None) -> None:
@@ -187,16 +367,45 @@ class JobManager:
             if thread.is_alive():
                 raise TimeoutError("任务仍在运行")
 
+    def _invoke_runner(self, job: Job, cmd: list[str]) -> int:
+        kwargs = {}
+        try:
+            if "job" in inspect.signature(self._runner).parameters:
+                kwargs["job"] = job
+        except (TypeError, ValueError):
+            pass
+        return self._runner(cmd, job.append_log, self.cwd, **kwargs)
+
     def _run(self, job: Job, cmd: list[str]) -> None:
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True)
-            code = self._runner(cmd, job.append_log, self.cwd)
-            if code == 0:
-                job.finish(success=True, output_name=_output_name_from_logs(job.logs, self.output_dir))
+            self._persist(job)
+            code = self._invoke_runner(job, cmd)
+            if job.cancelled:
+                job.finish(success=False, error="任务已取消")
+            elif code == 0:
+                job.finish(
+                    success=True,
+                    output_name=_output_name_from_logs(job.logs, self.output_dir)
+                    or _newest_tutorial_name(self.output_dir),
+                )
             else:
                 job.finish(success=False, error=_exit_reason(job.logs, code))
+        except JobCancelled:
+            job.finish(success=False, error="任务已取消")
         except Exception as exc:
             job.finish(success=False, error=str(exc))
+        finally:
+            self._persist(job)
+
+    def _persist(self, job: Job) -> None:
+        try:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self.state_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(job.persist_payload(), ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(self.state_path)
+        except OSError:
+            pass
 
 
 ERROR_HINTS = (
@@ -207,6 +416,7 @@ ERROR_HINTS = (
     "KeyError",
     "OPENROUTER_API_KEY",
     "LLM_PROVIDER",
+    "QUICK_STUDY_ERROR",
     "Failed",
     "failed",
     "HTTP error",
@@ -216,15 +426,14 @@ ERROR_HINTS = (
 
 
 def _exit_reason(logs: list[str], code: int) -> str:
-    """Surface why the CLI died so the web page can show more than an exit code."""
     matched = [line.rstrip() for line in logs if line.strip() and any(hint in line for hint in ERROR_HINTS)]
     if matched:
         excerpt = "\n".join(matched[-8:])
-        return f"进程退出码 {code}\n{excerpt}"
+        return format_error(f"进程退出码 {code}\n{excerpt}")
     nonempty = [line.rstrip() for line in logs if line.strip()]
     if nonempty:
-        return f"进程退出码 {code}\n{nonempty[-1]}"
-    return f"进程退出码 {code}"
+        return format_error(f"进程退出码 {code}\n{nonempty[-1]}")
+    return format_error(f"进程退出码 {code}")
 
 
 def _output_name_from_logs(logs: list[str], output_dir: Path) -> Optional[str]:
@@ -238,3 +447,18 @@ def _output_name_from_logs(logs: list[str], output_dir: Path) -> Optional[str]:
         except ValueError:
             return raw.name
     return None
+
+
+def _newest_tutorial_name(output_dir: Path) -> Optional[str]:
+    if not output_dir.is_dir():
+        return None
+    newest = None
+    newest_mtime = -1.0
+    for child in output_dir.iterdir():
+        index = child / "index.md"
+        if child.is_dir() and index.is_file():
+            mtime = index.stat().st_mtime
+            if mtime > newest_mtime:
+                newest = child.name
+                newest_mtime = mtime
+    return newest
