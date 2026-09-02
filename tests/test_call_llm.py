@@ -196,6 +196,80 @@ def test_empty_blocking_response_is_not_cached(tmp_path, monkeypatch):
     assert not cache_dir.exists() or list(cache_dir.glob("*.json")) == []
 
 
+def test_default_provider_is_openrouter_glm(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-should-not-win")
+    assert llm.get_llm_provider() == "OPENROUTER"
+    assert llm.DEFAULT_OPENROUTER_MODEL == "z-ai/glm-5.3-flash"
+    assert llm.DEFAULT_OPENROUTER_BASE_URL == "https://openrouter.ai/api"
+    assert llm.DEFAULT_TIMEOUT_SECONDS == 300
+    assert llm.chat_completions_url(llm.DEFAULT_OPENROUTER_BASE_URL) == (
+        "https://openrouter.ai/api/v1/chat/completions"
+    )
+
+
+def test_missing_openrouter_key_is_readable(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY is not set"):
+        llm.call_llm("hello", use_cache=False)
+
+
+def test_placeholder_openrouter_key_is_treated_as_missing(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "<OPENROUTER_API_KEY>")
+    with pytest.raises(ValueError, match="OPENROUTER_API_KEY is not set"):
+        llm.call_llm("hello", use_cache=False)
+
+
+def test_openrouter_default_posts_expected_url(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
+    monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(llm, "stream_enabled", True)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
+    monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    captured = {}
+    lines = [
+        'data: {"choices":[{"delta":{"content":"ok"}}]}',
+        "data: [DONE]",
+    ]
+
+    def post(url, **kwargs):
+        captured["url"] = url
+        captured["headers"] = kwargs.get("headers")
+        captured["payload"] = kwargs.get("json")
+        return _sse_response(lines)
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    assert llm.call_llm("hello", use_cache=False) == "ok"
+    assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer test-key"
+    assert captured["payload"]["model"] == "z-ai/glm-5.3-flash"
+    assert set(captured["payload"]) <= {"model", "messages", "temperature", "stream"}
+    assert captured["payload"]["stream"] is True
+
+
+def test_reasoning_field_is_progress_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
+    monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(llm, "stream_enabled", True)
+    monkeypatch.setenv("LLM_PROVIDER", "OPENROUTER")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("OPENROUTER_MODEL", "z-ai/glm-5.3-flash")
+    monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api")
+    lines = [
+        'data: {"choices":[{"delta":{"reasoning":"planning the answer"}}]}',
+        'data: {"choices":[{"delta":{"content":"visible"}}]}',
+        "data: [DONE]",
+    ]
+    monkeypatch.setattr(llm.requests, "post", Mock(return_value=_sse_response(lines)))
+    assert llm.call_llm("hello", use_cache=False) == "visible"
+
+
 def test_legacy_cache_is_read_once(tmp_path, monkeypatch):
     legacy = tmp_path / "llm_cache.json"
     legacy.write_text(json.dumps({"once": "legacy"}), encoding="utf-8")

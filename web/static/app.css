@@ -207,6 +207,22 @@ button:disabled {
   font-weight: 500;
 }
 
+.result-card {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid #bbf7d0;
+  background: #f0fdf4;
+  color: #14532d;
+}
+
+.result-card.is-error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+  white-space: pre-wrap;
+}
+
 .library {
   max-width: 1200px;
   margin: 0 auto 40px;

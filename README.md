@@ -91,11 +91,20 @@ This is a tutorial project of [Pocket Flow](https://github.com/The-Pocket/Pocket
    pip install -r requirements.txt
    ```
 
-4. Set up LLM in [`utils/call_llm.py`](./utils/call_llm.py) by providing credentials. To do so, you can put the values in a `.env` file. By default, you can use the AI Studio key with this client for Gemini Pro 2.5 by setting the `GEMINI_API_KEY` environment variable. If you want to use another LLM, you can set the `LLM_PROVIDER` environment variable (e.g. `XAI`), and then set the model, url, and API key (e.g. `XAI_MODEL`, `XAI_URL`,`XAI_API_KEY`). If using Ollama, the url is `http://localhost:11434/` and the API key can be omitted.
-   You can use your own models. We highly recommend the latest models with thinking capabilities (Claude 3.7 with thinking, O1). You can verify that it is correctly set up by running:
+4. Set up LLM in [`utils/call_llm.py`](./utils/call_llm.py) by providing credentials. Copy [`.env.sample`](./.env.sample) to `.env`. The default is OpenRouter:
+   ```env
+   LLM_PROVIDER=OPENROUTER
+   OPENROUTER_MODEL=z-ai/glm-5.3-flash
+   OPENROUTER_BASE_URL=https://openrouter.ai/api
+   OPENROUTER_API_KEY=your_openrouter_key
+   LLM_TIMEOUT_SECONDS=300
+   ```
+   `OPENROUTER_BASE_URL` must **not** include a trailing `/v1`; the client POSTs to `{BASE_URL}/v1/chat/completions` (`https://openrouter.ai/api/v1/chat/completions`). Gemini is optional: set `LLM_PROVIDER=GEMINI` plus `GEMINI_API_KEY` or `GEMINI_PROJECT_ID`. Other OpenAI-compatible providers still use `{PROVIDER}_MODEL` / `{PROVIDER}_BASE_URL` / `{PROVIDER}_API_KEY`. If using Ollama, the url is `http://localhost:11434/` and the API key can be omitted.
+   Verify the wiring with:
    ```bash
    python utils/call_llm.py
    ```
+   A missing `OPENROUTER_API_KEY` prints a readable error naming the default model and endpoint.
 
 5. Generate a complete codebase tutorial by running the main script:
     ```bash
@@ -136,7 +145,7 @@ To run this project in a Docker container, you'll need to pass your API keys as 
 
 2. Run the container
 
-   You'll need to provide your `GEMINI_API_KEY` for the LLM to function. If you're analyzing private GitHub repositories or want to avoid rate limits, also provide your `GITHUB_TOKEN`.
+   You'll need to provide your `OPENROUTER_API_KEY` for the default LLM. If you're analyzing private GitHub repositories or want to avoid rate limits, also provide your `GITHUB_TOKEN`.
    
    Mount a local directory to `/app/output` inside the container to access the generated tutorials on your host machine.
    
@@ -144,7 +153,7 @@ To run this project in a Docker container, you'll need to pass your API keys as 
    
    ```bash
    docker run -it --rm \
-     -e GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE" \
+     -e OPENROUTER_API_KEY="YOUR_OPENROUTER_API_KEY_HERE" \
      -v "$(pwd)/output_tutorials":/app/output \
      pocketflow-app --repo https://github.com/username/repo
    ```
@@ -153,7 +162,7 @@ To run this project in a Docker container, you'll need to pass your API keys as 
    
    ```bash
    docker run -it --rm \
-     -e GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE" \
+     -e OPENROUTER_API_KEY="YOUR_OPENROUTER_API_KEY_HERE" \
      -v "/path/to/your/local_codebase":/app/code_to_analyze \
      -v "$(pwd)/output_tutorials":/app/output \
      pocketflow-app --dir /app/code_to_analyze

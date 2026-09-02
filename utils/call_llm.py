@@ -35,7 +35,15 @@ legacy_cache_file = "llm_cache.json"
 # No timeout means a stalled connection hangs the whole run forever. With streaming the
 # read timeout measures the gap between chunks, so it detects a stall without capping
 # how long a long chapter may take to finish.
-request_timeout = (10, float(os.getenv("LLM_TIMEOUT_SECONDS", "180")))
+# OpenRouter + glm-5.3-flash is the product default. Gemini is optional
+# (LLM_PROVIDER=GEMINI). Do not join Zhipu /api/paas/v4 into this URL.
+DEFAULT_PROVIDER = "OPENROUTER"
+DEFAULT_OPENROUTER_MODEL = "z-ai/glm-5.3-flash"
+DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api"
+CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
+DEFAULT_TIMEOUT_SECONDS = 300
+
+request_timeout = (10, float(os.getenv("LLM_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))))
 stream_enabled = os.getenv("LLM_STREAM", "1").lower() not in ("0", "false", "no")
 progress_interval = float(os.getenv("LLM_PROGRESS_SECONDS", "5"))
 
@@ -119,12 +127,39 @@ def save_cache(prompt: str, response: str) -> None:
         logger.warning("Failed to save cache")
 
 
-def get_llm_provider():
-    provider = os.getenv("LLM_PROVIDER")
-    if not provider and (os.getenv("GEMINI_PROJECT_ID") or os.getenv("GEMINI_API_KEY")):
-        provider = "GEMINI"
-    # if necessary, add ANTHROPIC/OPENAI
-    return provider
+def _clean_env(name: str, default: str = "") -> str:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    value = raw.strip()
+    if not value:
+        return default
+    # .env.sample uses <PLACEHOLDER>; treat that as unset.
+    if len(value) > 2 and value.startswith("<") and value.endswith(">"):
+        return default
+    return value
+
+
+def get_llm_provider() -> str:
+    provider = _clean_env("LLM_PROVIDER")
+    if not provider:
+        return DEFAULT_PROVIDER
+    return provider.upper()
+
+
+def missing_openrouter_key_message() -> str:
+    endpoint = f"{DEFAULT_OPENROUTER_BASE_URL.rstrip('/')}{CHAT_COMPLETIONS_PATH}"
+    return (
+        "OPENROUTER_API_KEY is not set. "
+        "Copy .env.sample to .env and add your OpenRouter key. "
+        f"Default provider is {DEFAULT_PROVIDER}, model {DEFAULT_OPENROUTER_MODEL}, "
+        f"POST {endpoint}. "
+        "Gemini is optional: set LLM_PROVIDER=GEMINI and GEMINI_API_KEY."
+    )
+
+
+def chat_completions_url(base_url: str) -> str:
+    return f"{base_url.rstrip('/')}{CHAT_COMPLETIONS_PATH}"
 
 
 def _emit(line: str) -> None:
@@ -212,18 +247,18 @@ def _stream_chat_completion(url, headers, payload, progress: _Progress) -> str:
             if not choices:
                 continue
             delta = choices[0].get("delta") or {}
+            # Only assemble visible text from delta.content. Thinking may live
+            # in `reasoning` (or older `reasoning_content`); count it for
+            # progress even when content stays 0 chars. Do not add extra
+            # request fields to ask for reasoning.
             piece = delta.get("content")
             if piece:
                 parts.append(piece)
                 progress.add(len(piece))
-            elif delta.get("reasoning_content"):
-                progress.add(len(delta["reasoning_content"]), thinking=True)
-            else:
-                # Some gateways only put the full answer on the last chunk.
-                message = (choices[0].get("message") or {}).get("content")
-                if message and not parts:
-                    parts.append(message)
-                    progress.add(len(message))
+                continue
+            thinking = delta.get("reasoning") or delta.get("reasoning_content")
+            if thinking:
+                progress.add(len(thinking), thinking=True)
     text = "".join(parts)
     if not text.strip():
         raise EmptyLLMResponse("Streaming response contained no content")
@@ -252,43 +287,47 @@ def _blocking_chat_completion(url, headers, payload) -> str:
 
 def _call_llm_provider(prompt: str, progress: _Progress) -> str:
     """
-    Call an LLM provider based on environment variables.
-    Environment variables:
-    - LLM_PROVIDER: "OLLAMA" or "XAI"
-    - <provider>_MODEL: Model name (e.g., OLLAMA_MODEL, XAI_MODEL)
-    - <provider>_BASE_URL: Base URL without endpoint (e.g., OLLAMA_BASE_URL, XAI_BASE_URL)
-    - <provider>_API_KEY: API key (e.g., OLLAMA_API_KEY, XAI_API_KEY; optional for providers that don't require it)
-    The endpoint /v1/chat/completions will be appended to the base URL.
-    """
-    # Read the provider from environment variable
-    provider = os.environ.get("LLM_PROVIDER")
-    if not provider:
-        raise ValueError("LLM_PROVIDER environment variable is required")
+    Call an OpenAI-compatible chat completions API.
 
-    # Construct the names of the other environment variables
+    Defaults (when LLM_PROVIDER is unset): OPENROUTER + z-ai/glm-5.3-flash
+    at https://openrouter.ai/api/v1/chat/completions.
+
+    Environment variables:
+    - LLM_PROVIDER: OPENROUTER (default), GEMINI (handled elsewhere), OLLAMA, XAI, ...
+    - <provider>_MODEL / _BASE_URL / _API_KEY
+    OPENROUTER_MODEL and OPENROUTER_BASE_URL have product defaults.
+    OPENROUTER_API_KEY is required for the default provider.
+    The path /v1/chat/completions is appended to the base URL (no trailing /v1 on the base).
+    """
+    provider = get_llm_provider()
+    if provider == "GEMINI":
+        raise ValueError("Gemini is handled by _call_llm_gemini; do not call _call_llm_provider")
+
     model_var = f"{provider}_MODEL"
     base_url_var = f"{provider}_BASE_URL"
     api_key_var = f"{provider}_API_KEY"
 
-    # Read the provider-specific variables
-    model = os.environ.get(model_var)
-    base_url = os.environ.get(base_url_var)
-    api_key = os.environ.get(api_key_var, "")  # API key is optional, default to empty string
+    if provider == "OPENROUTER":
+        model = _clean_env(model_var, DEFAULT_OPENROUTER_MODEL)
+        base_url = _clean_env(base_url_var, DEFAULT_OPENROUTER_BASE_URL)
+        api_key = _clean_env(api_key_var)
+        if not api_key:
+            raise ValueError(missing_openrouter_key_message())
+    else:
+        model = _clean_env(model_var)
+        base_url = _clean_env(base_url_var)
+        api_key = _clean_env(api_key_var)
+        if not model:
+            raise ValueError(f"{model_var} environment variable is required")
+        if not base_url:
+            raise ValueError(f"{base_url_var} environment variable is required")
 
-    # Validate required variables
-    if not model:
-        raise ValueError(f"{model_var} environment variable is required")
-    if not base_url:
-        raise ValueError(f"{base_url_var} environment variable is required")
+    url = chat_completions_url(base_url)
 
-    # Append the endpoint to the base URL
-    url = f"{base_url.rstrip('/')}/v1/chat/completions"
-
-    # Configure headers and payload based on provider
     headers = {
         "Content-Type": "application/json",
     }
-    if api_key:  # Only add Authorization header if API key is provided
+    if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
     payload = {
@@ -332,7 +371,7 @@ def _call_llm_provider(prompt: str, progress: _Progress) -> str:
         raise Exception(f"Failed to parse response as JSON from {provider}. The server might have returned an invalid response.")
 
 
-# By default, we Google Gemini 2.5 pro, as it shows great performance for code understanding
+# Default: OpenRouter z-ai/glm-5.3-flash. Gemini is opt-in via LLM_PROVIDER=GEMINI.
 def call_llm(prompt: str, use_cache: bool = True, progress_label: str = None) -> str:
     logger.info(_prompt_log_text(prompt))
 
@@ -403,8 +442,15 @@ def _call_llm_gemini(prompt: str) -> str:
 
 if __name__ == "__main__":
     test_prompt = "Hello, how are you?"
-
-    # First call - should hit the API
+    provider = get_llm_provider()
+    print(f"LLM_PROVIDER={provider}")
+    if provider == "OPENROUTER":
+        print(f"OPENROUTER_MODEL={_clean_env('OPENROUTER_MODEL', DEFAULT_OPENROUTER_MODEL)}")
+        print(f"POST {chat_completions_url(_clean_env('OPENROUTER_BASE_URL', DEFAULT_OPENROUTER_BASE_URL))}")
     print("Making call...")
-    response1 = call_llm(test_prompt, use_cache=False)
+    try:
+        response1 = call_llm(test_prompt, use_cache=False)
+    except Exception as exc:
+        print(f"LLM call failed: {exc}")
+        raise SystemExit(1) from exc
     print(f"Response: {response1}")

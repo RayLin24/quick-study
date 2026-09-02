@@ -58,10 +58,15 @@ async function refreshTutorials() {
 function showResult(snap) {
   if (snap.status === "succeeded" && snap.output_name) {
     resultEl.hidden = false;
+    resultEl.className = "result result-card";
     resultEl.innerHTML = "";
+    const title = document.createElement("strong");
+    title.textContent = "生成成功";
     const link = document.createElement("a");
     link.href = `/t/${encodeURIComponent(snap.output_name)}`;
     link.textContent = `打开教程 ${snap.output_name}`;
+    resultEl.appendChild(title);
+    resultEl.appendChild(document.createElement("br"));
     resultEl.appendChild(link);
     setStatus("已完成");
     refreshTutorials();
@@ -69,11 +74,13 @@ function showResult(snap) {
   }
   if (snap.status === "failed") {
     resultEl.hidden = false;
+    resultEl.className = "result result-card is-error";
     resultEl.textContent = snap.error || "生成失败";
     setStatus("失败");
     return;
   }
   resultEl.hidden = true;
+  resultEl.className = "result";
 }
 
 function connectEvents() {
