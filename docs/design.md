@@ -18,7 +18,7 @@ nav_order: 2
 **Input:**
 - A publicly accessible GitHub repository URL or a local directory path.
 - A project name (optional, will be derived from the URL/directory if not provided).
-- Desired language for the tutorial (optional, defaults to English).
+- Desired language for the tutorial (optional). The Web UI defaults to Chinese; the CLI default remains English unless `--language` is set.
 
 **Output:**
 - A directory named after the project containing:
@@ -73,10 +73,12 @@ flowchart TD
     *   *Input*: `directory` (str), `max_file_size` (int, optional), `use_relative_paths` (bool, optional), `include_patterns` (set, optional), `exclude_patterns` (set, optional)
     *   *Output*: `dict` containing `files` (dict[str, str]).
     *   *Necessity*: Required by `FetchRepo` to read source code from a local directory if a `local_dir` path is provided. Handles directory walking, filtering, and file reading.
-3.  **`call_llm`** (`utils/call_llm.py`) - *External Dependency: LLM Provider API (e.g., Google GenAI)*
+3.  **`call_llm`** (`utils/call_llm.py`) - *External Dependency: LLM Provider API (default OpenRouter)*
     *   *Input*: `prompt` (str), `use_cache` (bool, optional)
     *   *Output*: `response` (str)
     *   *Necessity*: Used by `IdentifyAbstractions`, `AnalyzeRelationships`, `OrderChapters`, and `WriteChapters` for code analysis and content generation. Needs careful prompt engineering and YAML validation (implicit via `yaml.safe_load` which raises errors).
+    *   *Default*: `LLM_PROVIDER=OPENROUTER`, model `z-ai/glm-5.3-flash`, `POST https://openrouter.ai/api/v1/chat/completions` with `Bearer OPENROUTER_API_KEY`. Timeout 300s. Gemini is optional (`LLM_PROVIDER=GEMINI`).
+    *   *Streaming*: request body has no extra reasoning fields; only `delta.content` is assembled. Thinking may appear in `reasoning` and is used for progress only. Empty stream falls back to a non-stream call.
 
 ## Node Design
 
@@ -97,7 +99,7 @@ shared = {
     "include_patterns": set(), # File patterns to include
     "exclude_patterns": set(), # File patterns to exclude
     "max_file_size": 100000, # Default or user-specified max file size
-    "language": "english", # Default or user-specified language for the tutorial
+    "language": "english", # CLI default; Web UI / JobIn default is Chinese
 
     # --- Intermediate/Output Data ---
     "files": [], # Output of FetchRepo: List of tuples (file_path: str, file_content: str)

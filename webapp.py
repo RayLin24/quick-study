@@ -143,7 +143,7 @@ def _chapter_links(output_dir: Path, tutorial_name: str) -> list[dict]:
         return []
     items = [{"title": "目录", "href": f"/t/{tutorial_name}", "filename": "index.md", "number": "0"}]
     for path in sorted(folder.glob("*.md")):
-        if path.name == "index.md":
+        if path.name in {"index.md", "README.md"}:
             continue
         heading = first_heading(path.read_text(encoding="utf-8"))
         number = path.stem.split("_", 1)[0] if path.stem[:1].isdigit() else ""

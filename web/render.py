@@ -6,12 +6,16 @@ from pathlib import Path
 
 import markdown
 
+FRONT_MATTER = re.compile(r"^---\r?\n.*?\r?\n---\r?\n", re.DOTALL)
 MERMAID_FENCE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
+CODE_FENCE = re.compile(r"```[\w+-]*[^\n]*\n.*?```", re.DOTALL)
+HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
 HREF_RE = re.compile(r'href="([^"]+)"')
 HEADING_RE = re.compile(r"^#\s+(.+)$", re.M)
 TABLE_RE = re.compile(r"<table>.*?</table>", re.DOTALL)
 H1_RE = re.compile(r"<h1>(.*?)</h1>", re.DOTALL)
 IMG_RE = re.compile(r"<img\b[^>]*>", re.I)
+INDEX_FILENAMES = ("index.md", "README.md")
 
 COVER_PALETTES = (
     ("#FFF8EF", "#DBEAFE", "#CCFBF1", "#FEF3C7", "#2563EB", "#0D9488", "#D97706", "#1E3A5F"),
@@ -21,12 +25,20 @@ COVER_PALETTES = (
 )
 
 
+def tutorial_index_path(folder: Path) -> Path | None:
+    for name in INDEX_FILENAMES:
+        path = folder / name
+        if path.is_file():
+            return path
+    return None
+
+
 def list_tutorials(output_dir: Path) -> list[dict]:
     if not output_dir.is_dir():
         return []
     items = []
     for child in sorted(output_dir.iterdir(), key=lambda p: p.name.lower()):
-        if child.is_dir() and (child / "index.md").is_file():
+        if child.is_dir() and tutorial_index_path(child) is not None:
             items.append({"name": child.name})
     return items
 
@@ -42,9 +54,17 @@ def resolve_tutorial_file(output_root: Path, tutorial: str, filename: str) -> Pa
         target.relative_to(root)
     except ValueError as exc:
         raise ValueError("非法路径") from exc
-    if not target.is_file():
-        raise FileNotFoundError(str(target))
-    return target
+    if target.is_file():
+        return target
+    if filename == "index.md":
+        readme = (root / tutorial / "README.md").resolve()
+        try:
+            readme.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("非法路径") from exc
+        if readme.is_file():
+            return readme
+    raise FileNotFoundError(str(target))
 
 
 def first_heading(text: str) -> str | None:
@@ -96,14 +116,31 @@ def build_cover_svg(title: str) -> str:
     return "".join(parts)
 
 
+def _escape_raw_html_outside_code(text: str) -> str:
+    """Keep fenced code intact; show raw HTML tags as text so they cannot leak."""
+    code_blocks: list[str] = []
+
+    def stash_code(match: re.Match[str]) -> str:
+        code_blocks.append(match.group(0))
+        return f"@@CODE{len(code_blocks) - 1}@@"
+
+    prepared = CODE_FENCE.sub(stash_code, text)
+    prepared = HTML_TAG_RE.sub(lambda match: html_lib.escape(match.group(0)), prepared)
+    for index, block in enumerate(code_blocks):
+        prepared = prepared.replace(f"@@CODE{index}@@", block)
+    return prepared
+
+
 def markdown_to_html(text: str, tutorial_name: str) -> str:
+    if text.startswith("---"):
+        text = FRONT_MATTER.sub("", text, count=1)
     placeholders: list[str] = []
 
     def stash(match: re.Match[str]) -> str:
         placeholders.append(match.group(1).strip())
         return f"@@MERMAID{len(placeholders) - 1}@@"
 
-    prepared = MERMAID_FENCE.sub(stash, text)
+    prepared = _escape_raw_html_outside_code(MERMAID_FENCE.sub(stash, text))
     body = markdown.markdown(prepared, extensions=["fenced_code", "tables", "sane_lists"])
     heading = first_heading(text) or tutorial_name
     for index, source in enumerate(placeholders):

@@ -194,9 +194,37 @@ class JobManager:
             if code == 0:
                 job.finish(success=True, output_name=_output_name_from_logs(job.logs, self.output_dir))
             else:
-                job.finish(success=False, error=f"进程退出码 {code}")
+                job.finish(success=False, error=_exit_reason(job.logs, code))
         except Exception as exc:
             job.finish(success=False, error=str(exc))
+
+
+ERROR_HINTS = (
+    "Traceback",
+    "Error",
+    "Exception",
+    "ValueError",
+    "KeyError",
+    "OPENROUTER_API_KEY",
+    "LLM_PROVIDER",
+    "Failed",
+    "failed",
+    "HTTP error",
+    "timed out",
+    "超时",
+)
+
+
+def _exit_reason(logs: list[str], code: int) -> str:
+    """Surface why the CLI died so the web page can show more than an exit code."""
+    matched = [line.rstrip() for line in logs if line.strip() and any(hint in line for hint in ERROR_HINTS)]
+    if matched:
+        excerpt = "\n".join(matched[-8:])
+        return f"进程退出码 {code}\n{excerpt}"
+    nonempty = [line.rstrip() for line in logs if line.strip()]
+    if nonempty:
+        return f"进程退出码 {code}\n{nonempty[-1]}"
+    return f"进程退出码 {code}"
 
 
 def _output_name_from_logs(logs: list[str], output_dir: Path) -> Optional[str]:
