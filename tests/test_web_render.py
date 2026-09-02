@@ -97,3 +97,5 @@ def test_pocketflow_index_renders_mermaid_and_toc_links():
     assert "```mermaid" not in html
     assert "<h1>" in html
     assert "figure class=\"diagram" in html
+    assert "nav_order" not in html
+    assert "layout: default" not in html

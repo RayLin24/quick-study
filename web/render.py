@@ -6,6 +6,7 @@ from pathlib import Path
 
 import markdown
 
+FRONT_MATTER = re.compile(r"^---\r?\n.*?\r?\n---\r?\n", re.DOTALL)
 MERMAID_FENCE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 CODE_FENCE = re.compile(r"```[\w+-]*[^\n]*\n.*?```", re.DOTALL)
 HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
@@ -131,6 +132,8 @@ def _escape_raw_html_outside_code(text: str) -> str:
 
 
 def markdown_to_html(text: str, tutorial_name: str) -> str:
+    if text.startswith("---"):
+        text = FRONT_MATTER.sub("", text, count=1)
     placeholders: list[str] = []
 
     def stash(match: re.Match[str]) -> str:
