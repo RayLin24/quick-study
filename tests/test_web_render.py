@@ -22,12 +22,19 @@ def test_article_gets_cover_lead_and_table_wrap():
     html = markdown_to_html(
         "# Chapter 1: Agent\n\nAgent 把模型和工具串起来。\n\n| 方法 | 作用 |\n| --- | --- |\n| invoke | 一次调用 |\n",
         tutorial_name="Demo",
+        cover=True,
     )
     assert '<figure class="cover">' in html
     assert 'class="lead"' in html
     assert '<div class="table-wrap">' in html
     assert "<table>" in html
     assert "Agent" in html
+
+
+def test_chapter_pages_do_not_get_cover():
+    html = markdown_to_html("# Chapter 1: Agent\n\n正文", tutorial_name="Demo", cover=False)
+    assert '<figure class="cover">' not in html
+    assert "Chapter 1" in html
 
 
 def test_relative_markdown_links_point_at_tutorial_route():

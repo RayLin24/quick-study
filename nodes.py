@@ -3,14 +3,17 @@ import os
 import re
 import yaml
 from pocketflow import Node, BatchNode, AsyncParallelBatchNode
-from utils.crawl_github_files import crawl_github_files
+from utils.crawl_github_files import crawl_github_files, GitHubCrawlError, parse_github_http_url
 from utils.call_llm import call_llm
 from utils.crawl_local_files import crawl_local_files
+from utils.errors import format_error
 from utils.repo_map import build_repo_map, expand_abstraction_files
 
 # Chapters are written concurrently; keep enough headroom that the provider does not
 # start rate-limiting, which would cost more than the parallelism saves.
 CHAPTER_CONCURRENCY = int(os.getenv("LLM_MAX_CONCURRENCY", "5"))
+YAML_TEMPERATURE = 0.2
+CRAWL_FILE_THRESHOLD = int(os.getenv("CRAWL_FILE_THRESHOLD", "80"))
 MIN_CHAPTER_CHARS = 200
 DEFAULT_LLM_CONTEXT_CHARS = 100_000
 DEFAULT_LLM_FILE_CHARS = 6_000
@@ -125,7 +128,7 @@ def clip_snippets(content_map, *, max_total_chars=None, max_file_chars=None):
     for idx_path, content in content_map.items():
         body = (content or "")[:max_file_chars]
         label = idx_path.split("# ", 1)[1] if "# " in idx_path else idx_path
-        piece = f"--- File: {label} ---\n{body}\n\n"
+        piece = f"--- File: {label} ---\n# source: {label}\n{body}\n\n"
         if used + len(piece) > max_total_chars:
             break
         parts.append(piece)
@@ -169,9 +172,12 @@ class FetchRepo(Node):
         project_name = shared.get("project_name")
 
         if not project_name:
-            # Basic name derivation from URL or directory
             if repo_url:
-                project_name = repo_url.split("/")[-1].replace(".git", "")
+                try:
+                    _owner, repo_name, _remainder = parse_github_http_url(repo_url)
+                    project_name = repo_name
+                except GitHubCrawlError:
+                    project_name = repo_url.rstrip("/").split("/")[-1].replace(".git", "")
             else:
                 project_name = os.path.basename(os.path.abspath(local_dir))
             shared["project_name"] = project_name
@@ -189,19 +195,23 @@ class FetchRepo(Node):
             "exclude_patterns": exclude_patterns,
             "max_file_size": max_file_size,
             "use_relative_paths": True,
+            "include_specified": bool(shared.get("include_specified")),
         }
 
     def exec(self, prep_res):
         if prep_res["repo_url"]:
             print(f"Crawling repository: {prep_res['repo_url']}...")
-            result = crawl_github_files(
-                repo_url=prep_res["repo_url"],
-                token=prep_res["token"],
-                include_patterns=prep_res["include_patterns"],
-                exclude_patterns=prep_res["exclude_patterns"],
-                max_file_size=prep_res["max_file_size"],
-                use_relative_paths=prep_res["use_relative_paths"],
-            )
+            try:
+                result = crawl_github_files(
+                    repo_url=prep_res["repo_url"],
+                    token=prep_res["token"],
+                    include_patterns=prep_res["include_patterns"],
+                    exclude_patterns=prep_res["exclude_patterns"],
+                    max_file_size=prep_res["max_file_size"],
+                    use_relative_paths=prep_res["use_relative_paths"],
+                )
+            except GitHubCrawlError as exc:
+                raise ValueError(format_error(exc)) from exc
         else:
             print(f"Crawling directory: {prep_res['local_dir']}...")
 
@@ -213,15 +223,30 @@ class FetchRepo(Node):
                 use_relative_paths=prep_res["use_relative_paths"]
             )
 
-        # Convert dict to list of tuples: [(path, content), ...], sorted so file indices stay stable
+        if not isinstance(result, dict):
+            raise ValueError(format_error("crawl returned no result for this URL"))
+        if result.get("stats", {}).get("error"):
+            raise ValueError(format_error(result["stats"]["error"]))
+
         files_list = sorted(result.get("files", {}).items(), key=lambda item: item[0])
         if len(files_list) == 0:
-            raise (ValueError("Failed to fetch files"))
+            raise ValueError(format_error("Failed to fetch files"))
+        threshold = CRAWL_FILE_THRESHOLD
+        if len(files_list) > threshold and not prep_res.get("include_specified"):
+            raise ValueError(
+                format_error(
+                    f"crawled {len(files_list)} files (threshold {threshold}). "
+                    "Set include / exclude / max-size to shrink the crawl, "
+                    "or pass include patterns to confirm this scope."
+                )
+            )
         print(f"Fetched {len(files_list)} files.")
+        print(f"QUICK_STUDY_STATS: file_count={len(files_list)} map_mode=pending")
         return files_list
 
     def post(self, shared, prep_res, exec_res):
-        shared["files"] = exec_res  # List of (path, content) tuples
+        shared["files"] = exec_res
+        shared["file_count"] = len(exec_res)
 
 
 class IdentifyAbstractions(Node):
@@ -318,7 +343,11 @@ Format the output as a YAML list of dictionaries:
     - 5 # path/to/another.js
 # ... up to {max_abstraction_num} abstractions
 ```"""
-        response = call_llm(prompt, use_cache=(use_cache and self.cur_retry == 0))  # Use cache only if enabled and not retrying
+        response = call_llm(
+            prompt,
+            use_cache=(use_cache and self.cur_retry == 0),
+            temperature=YAML_TEMPERATURE,
+        )
 
         abstractions = parse_llm_yaml(response)
 
@@ -374,6 +403,11 @@ Format the output as a YAML list of dictionaries:
 
     def post(self, shared, prep_res, exec_res):
         shared["abstractions"] = expand_abstraction_files(exec_res, shared["files"])
+        map_mode = bool(prep_res[-1]) if isinstance(prep_res, tuple) else False
+        file_count = prep_res[2] if isinstance(prep_res, tuple) else len(shared.get("files") or [])
+        shared["map_mode"] = map_mode
+        shared["file_count"] = file_count
+        print(f"QUICK_STUDY_STATS: file_count={file_count} map_mode={str(map_mode).lower()}")
 
 
 class AnalyzeRelationships(Node):
@@ -479,7 +513,11 @@ relationships:
 
 Now, provide the YAML output:
 """
-        response = call_llm(prompt, use_cache=(use_cache and self.cur_retry == 0)) # Use cache only if enabled and not retrying
+        response = call_llm(
+            prompt,
+            use_cache=(use_cache and self.cur_retry == 0),
+            temperature=YAML_TEMPERATURE,
+        )
 
         relationships_data = parse_llm_yaml(response)
 
@@ -619,7 +657,11 @@ Output the ordered list of abstraction indices, including the name in a comment 
 
 Now, provide the YAML output:
 """
-        response = call_llm(prompt, use_cache=(use_cache and self.cur_retry == 0)) # Use cache only if enabled and not retrying
+        response = call_llm(
+            prompt,
+            use_cache=(use_cache and self.cur_retry == 0),
+            temperature=YAML_TEMPERATURE,
+        )
 
         ordered_indices_raw = parse_llm_yaml(response)
 
@@ -832,7 +874,7 @@ Instructions for the chapter (Generate content in {language.capitalize()} unless
 
 - Explain how to use this abstraction to solve the use case{instruction_lang_note}. Give example inputs and outputs for code snippets (if the output isn't values, describe at a high level what will happen{instruction_lang_note}).
 
-- Each code block should be BELOW 10 lines! If longer code blocks are needed, break them down into smaller pieces and walk through them one-by-one. Aggresively simplify the code to make it minimal. Use comments{code_comment_note} to skip non-important implementation details. Each code block should have a beginner friendly explanation right after it{instruction_lang_note}.
+- Each code block should be BELOW 10 lines! If longer code blocks are needed, break them down into smaller pieces and walk through them one-by-one. Aggresively simplify the code to make it minimal. Use comments{code_comment_note} to skip non-important implementation details. Each code block MUST include the source file path (as a Markdown italic line immediately above the fence, e.g. `*source: path/to/file.py*`, or as the first comment). Do not invent paths — use the `--- File:` / `# source:` labels from the snippets. Each code block should have a beginner friendly explanation right after it{instruction_lang_note}.
 
 - Describe the internal implementation to help understand what's under the hood{instruction_lang_note}. First provide a non-code or code-light walkthrough on what happens step-by-step when the abstraction is called{instruction_lang_note}. It's recommended to use a simple sequenceDiagram with a dummy example - keep it minimal with at most 5 participants to ensure clarity. If participant name has space, use: `participant QP as Query Processing`. {mermaid_lang_note}.
 
@@ -927,6 +969,13 @@ class CombineTutorial(Node):
         index_content += f"{relationships_data['summary']}\n\n"  # Use the potentially translated summary directly
         # Keep fixed strings in English
         index_content += f"**Source Repository:** [{repo_url}]({repo_url})\n\n"
+        file_count = shared.get("file_count")
+        map_mode = shared.get("map_mode")
+        if file_count is not None:
+            index_content += (
+                f"**Crawl:** {file_count} files"
+                f", map_mode={'true' if map_mode else 'false'}\n\n"
+            )
 
         # Add Mermaid diagram for relationships (diagram itself uses potentially translated names/labels)
         index_content += "```mermaid\n"

@@ -104,7 +104,15 @@ This is a tutorial project of [Pocket Flow](https://github.com/The-Pocket/Pocket
    ```bash
    python utils/call_llm.py
    ```
-   A missing `OPENROUTER_API_KEY` prints a readable error naming the default model and endpoint.
+   A missing `OPENROUTER_API_KEY` prints a readable `QUICK_STUDY_ERROR:` naming the default model and endpoint.
+
+   Web UI (bind loopback only; this tool has no login):
+
+   ```bash
+   python -m uvicorn webapp:app --host 127.0.0.1 --port 8000
+   ```
+
+   Open http://127.0.0.1:8000 . Set `GITHUB_TOKEN` in `.env` if needed — do not put the token on argv.
 
 5. Generate a complete codebase tutorial by running the main script:
     ```bash
@@ -120,7 +128,7 @@ This is a tutorial project of [Pocket Flow](https://github.com/The-Pocket/Pocket
 
     - `--repo` or `--dir` - Specify either a GitHub repo URL or a local directory path (required, mutually exclusive)
     - `-n, --name` - Project name (optional, derived from URL/directory if omitted)
-    - `-t, --token` - GitHub token (or set GITHUB_TOKEN environment variable)
+    - `-t, --token` - GitHub token (prefer `GITHUB_TOKEN` in the environment; do not pass tokens on argv in the web runner)
     - `-o, --output` - Output directory (default: ./output)
     - `-i, --include` - Files to include (e.g., "`*.py`" "`*.js`")
     - `-e, --exclude` - Files to exclude (e.g., "`tests/*`" "`docs/*`")

@@ -9,6 +9,11 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Union, Set, List, Dict, Tuple, Any, Callable, Optional
 from urllib.parse import quote, urlparse
 
+try:
+    from utils.errors import format_error
+except ImportError:  # python utils/crawl_github_files.py
+    from errors import format_error
+
 # Downloads are independent, and a serial crawl spends ~1.6s of round trip per file.
 GITHUB_MAX_CONCURRENCY = int(os.getenv("GITHUB_MAX_CONCURRENCY", "16"))
 
@@ -22,6 +27,77 @@ TRANSIENT_HTTP_ERRORS = (
 
 class DownloadIncompleteError(Exception):
     """Raised when wanted files could not be downloaded after retries."""
+
+
+class GitHubCrawlError(Exception):
+    """Fatal crawl failure with a human-readable QUICK_STUDY_ERROR message."""
+
+
+def github_http_error(status: int, *, token, owner: str, repo: str, path: str = "") -> str:
+    where = f"{owner}/{repo}" + (f" path '{path}'" if path else "")
+    if status == 404:
+        if not token:
+            return format_error(
+                f"GitHub 404: {where} was not found or is private. "
+                "Set GITHUB_TOKEN in the environment (do not put the token on argv)."
+            )
+        return format_error(
+            f"GitHub 404: {where} was not found, or the token lacks access."
+        )
+    if status == 403:
+        return format_error(
+            f"GitHub 403: access denied or rate-limited for {where}. "
+            "Set GITHUB_TOKEN in the environment (do not put the token on argv)."
+        )
+    return format_error(f"GitHub HTTP {status} for {where}")
+
+
+def parse_github_http_url(repo_url: str) -> tuple[str, str, str | None]:
+    """Return (owner, repo, tree_remainder_or_None). tree_remainder is after /tree/."""
+    parsed = urlparse(repo_url)
+    parts = [p for p in parsed.path.strip("/").split("/") if p]
+    if len(parts) < 2:
+        raise GitHubCrawlError(format_error(f"Invalid GitHub URL: {repo_url}"))
+    owner, repo = parts[0], parts[1].removesuffix(".git")
+    if len(parts) >= 3 and parts[2] == "tree":
+        remainder = "/".join(parts[3:])
+        return owner, repo, remainder
+    return owner, repo, None
+
+
+def candidate_tree_splits(
+    remainder: str, branch_names: list[str] | None = None
+) -> list[tuple[str, str]]:
+    """Possible (ref, path) splits for /tree/<ref>/<path>, longest ref first.
+
+    Branch names may contain `/` (e.g. release/1.0). Known branch names win;
+    otherwise every prefix of the remainder is a candidate so a missing branch
+    list does not permanently mis-parse `release/1.0/src` as ref=`release`.
+    """
+    remaining = (remainder or "").strip("/")
+    if not remaining:
+        return []
+    seen: list[tuple[str, str]] = []
+
+    def add(ref: str, path: str) -> None:
+        pair = (ref, path)
+        if ref and pair not in seen:
+            seen.append(pair)
+
+    names = sorted((n for n in (branch_names or []) if n), key=len, reverse=True)
+    for name in names:
+        if remaining == name or remaining.startswith(name + "/"):
+            add(name, remaining[len(name) :].lstrip("/"))
+    parts = remaining.split("/")
+    for i in range(len(parts), 0, -1):
+        add("/".join(parts[:i]), "/".join(parts[i:]))
+    return seen
+
+
+def resolve_tree_ref(remainder: str, branch_names: list[str] | None = None) -> tuple[str, str]:
+    """Split /tree/<ref>/<path>. Longest-prefix match so refs with '/' work."""
+    candidates = candidate_tree_splits(remainder, branch_names)
+    return candidates[0] if candidates else ("", "")
 
 
 def path_under_base(item_path: str, base_prefix: str) -> bool:
@@ -291,95 +367,44 @@ def crawl_github_files(
                 }
             }
 
-    # Parse GitHub URL to extract owner, repo, commit/branch, and path
-    parsed_url = urlparse(repo_url)
-    path_parts = parsed_url.path.strip('/').split('/')
-    
-    if len(path_parts) < 2:
-        raise ValueError(f"Invalid GitHub URL: {repo_url}")
-    
-    # Extract the basic components
-    owner = path_parts[0]
-    repo = path_parts[1]
-    
-    # Setup for GitHub API
+    owner, repo, tree_remainder = parse_github_http_url(repo_url)
+
     headers = {"Accept": "application/vnd.github.v3+json"}
     if token:
         headers["Authorization"] = f"token {token}"
 
     def fetch_branches(owner: str, repo: str):
-        """Get brancshes of the repository"""
-
         url = f"https://api.github.com/repos/{owner}/{repo}/branches"
         response = requests.get(url, headers=headers, timeout=(30, 30))
-
-        if response.status_code == 404:
-            if not token:
-                print(f"Error 404: Repository not found or is private.\n"
-                      f"If this is a private repository, please provide a valid GitHub token via the 'token' argument or set the GITHUB_TOKEN environment variable.")
-            else:
-                print(f"Error 404: Repository not found or insufficient permissions with the provided token.\n"
-                      f"Please verify the repository exists and the token has access to this repository.")
+        if response.status_code in (403, 404):
+            print(github_http_error(response.status_code, token=token, owner=owner, repo=repo))
             return []
-            
         if response.status_code != 200:
-            print(f"Error fetching the branches of {owner}/{repo}: {response.status_code} - {response.text}")
+            print(github_http_error(response.status_code, token=token, owner=owner, repo=repo))
             return []
-
         return response.json()
 
-    def check_tree(owner: str, repo: str, tree: str):
-        """Check the repository has the given tree"""
-
-        url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/{tree}"
-        response = requests.get(url, headers=headers, timeout=(30, 30))
-
-        return True if response.status_code == 200 else False 
-
-    # Check if URL contains a specific branch/commit
-    if len(path_parts) > 2 and 'tree' == path_parts[2]:
-        join_parts = lambda i: '/'.join(path_parts[i:])
-
+    if tree_remainder is not None:
         branches = fetch_branches(owner, repo)
-        branch_names = map(lambda branch: branch.get("name"), branches)
-
-        # Fetching branches is not successfully
-        if len(branches) == 0:
-            return
-
-        # To check branch name
-        relevant_path = join_parts(3)
-
-        # Find a match with relevant path and get the branch name
-        filter_gen = (name for name in branch_names if relevant_path.startswith(name))
-        ref = next(filter_gen, None)
-
-        # If match is not found, check for is it a tree
-        if ref == None:
-            tree = path_parts[3]
-            ref = tree if check_tree(owner, repo, tree) else None
-
-        # If it is neither a tree nor a branch name
-        if ref == None:
-            print(f"The given path does not match with any branch and any tree in the repository.\n"
-                  f"Please verify the path is exists.")
-            return
-
-        # Combine all parts after the ref as the path
-        part_index = 5 if '/' in ref else 4
-        specific_path = join_parts(part_index) if part_index < len(path_parts) else ""
+        branch_names = [branch.get("name") for branch in branches if isinstance(branch, dict)]
+        candidates = candidate_tree_splits(tree_remainder, branch_names)
+        if not candidates:
+            raise GitHubCrawlError(
+                format_error(
+                    f"GitHub /tree/ URL has no ref: {repo_url}. "
+                    "Use https://github.com/owner/repo or https://github.com/owner/repo/tree/branch."
+                )
+            )
     else:
-        # Dont put the ref param to quiery
-        # and let Github decide default branch
-        ref = None
-        specific_path = ""
+        candidates = [(None, "")]
     
     # Dictionary to store path -> content mapping
     files = {}
     skipped_files = []
     failed_downloads = []
-
+    ref, specific_path = candidates[0]
     base_prefix = specific_path.rstrip('/') if specific_path else ""
+    source = "tree"
 
     def under_base(item_path: str) -> bool:
         return path_under_base(item_path, base_prefix)
@@ -503,20 +528,12 @@ def crawl_github_files(
             time.sleep(wait_time)
             return fetch_contents(path)
             
-        if response.status_code == 404:
-            if not token:
-                print(f"Error 404: Repository not found or is private.\n"
-                      f"If this is a private repository, please provide a valid GitHub token via the 'token' argument or set the GITHUB_TOKEN environment variable.")
-            elif not path and ref == 'main':
-                print(f"Error 404: Repository not found. Check if the default branch is not 'main'\n"
-                      f"Try adding branch name to the request i.e. python main.py --repo https://github.com/username/repo/tree/master")
-            else:
-                print(f"Error 404: Path '{path}' not found in repository or insufficient permissions with the provided token.\n"
-                      f"Please verify the token has access to this repository and the path exists.")
+        if response.status_code in (403, 404):
+            print(github_http_error(response.status_code, token=token, owner=owner, repo=repo, path=path))
             return
-            
+
         if response.status_code != 200:
-            print(f"Error fetching {path}: {response.status_code} - {response.text}")
+            print(github_http_error(response.status_code, token=token, owner=owner, repo=repo, path=path))
             return
         
         contents = response.json()
@@ -580,15 +597,60 @@ def crawl_github_files(
     
     # One recursive tree call plus parallel downloads; the per-directory walk below is the
     # fallback for refs the tree API cannot serve (or trees GitHub truncates).
-    tree_ref = ref or default_branch()
-    source = "tree"
-    if not (tree_ref and crawl_via_tree(tree_ref)):
+    def run_one_source() -> bool:
+        nonlocal source
+        tree_ref = ref or default_branch()
+        source = "tree"
+        if tree_ref and crawl_via_tree(tree_ref):
+            return True
         source = "contents_walk"
         files.clear()
         skipped_files.clear()
         failed_downloads.clear()
         fetch_contents(specific_path)
-        raise_if_downloads_incomplete(failed_downloads, max(len(files) + len(failed_downloads), 1))
+        raise_if_downloads_incomplete(
+            failed_downloads, max(len(files) + len(failed_downloads), 1)
+        )
+        return bool(files)
+
+    last_incomplete = None
+    resolved = False
+    for cand_ref, cand_path in candidates:
+        ref = cand_ref
+        specific_path = cand_path
+        base_prefix = specific_path.rstrip("/") if specific_path else ""
+        files.clear()
+        skipped_files.clear()
+        failed_downloads.clear()
+        if tree_remainder is not None:
+            print(f"Resolved tree URL ref={ref!r} path={specific_path!r}")
+        try:
+            if run_one_source():
+                resolved = True
+                break
+        except DownloadIncompleteError as exc:
+            last_incomplete = exc
+            continue
+
+    if not resolved and not files:
+        if last_incomplete:
+            raise last_incomplete
+        if tree_remainder is not None:
+            return {
+                "files": {},
+                "stats": {
+                    "error": format_error(
+                        f"Could not crawl GitHub tree URL: {repo_url}"
+                    ),
+                    "downloaded_count": 0,
+                    "skipped_count": 0,
+                    "skipped_files": [],
+                    "base_path": None,
+                    "include_patterns": include_patterns,
+                    "exclude_patterns": exclude_patterns,
+                    "source": "unresolved_tree",
+                },
+            }
 
     return {
         "files": dict(sort_files(files)),

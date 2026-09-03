@@ -270,14 +270,51 @@ def test_reasoning_field_is_progress_only(tmp_path, monkeypatch):
     assert llm.call_llm("hello", use_cache=False) == "visible"
 
 
-def test_legacy_cache_is_read_once(tmp_path, monkeypatch):
-    legacy = tmp_path / "llm_cache.json"
-    legacy.write_text(json.dumps({"once": "legacy"}), encoding="utf-8")
+def test_cache_key_includes_provider_and_model(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
-    monkeypatch.setattr(llm, "legacy_cache_file", str(legacy))
-    llm._legacy_cache = None
-    llm._legacy_loaded = False
+    monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(llm, "stream_enabled", False)
+    monkeypatch.setenv("LLM_PROVIDER", "OPENROUTER")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("OPENROUTER_MODEL", "model-a")
+    monkeypatch.setenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api")
+    monkeypatch.setattr(llm.requests, "post", Mock(return_value=_completion("from-a")))
+    assert llm.call_llm("hello", use_cache=True) == "from-a"
+    monkeypatch.setenv("OPENROUTER_MODEL", "model-b")
+    monkeypatch.setattr(llm.requests, "post", Mock(return_value=_completion("from-b")))
+    assert llm.call_llm("hello", use_cache=True) == "from-b"
 
-    assert llm.load_cache("once") == "legacy"
-    legacy.write_text(json.dumps({"once": "changed"}), encoding="utf-8")
-    assert llm.load_cache("once") == "legacy"
+
+def test_empty_stream_fallback_is_logged(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
+    monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(llm, "stream_enabled", True)
+    monkeypatch.setenv("LLM_PROVIDER", "DEEPSEEK")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "m")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.example.test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    empty = _sse_response(
+        [
+            'data: {"choices":[{"delta":{"reasoning":"thinking"}}]}',
+            "data: [DONE]",
+        ]
+    )
+    blocked = _completion("from blocking")
+
+    def post(_url, **kwargs):
+        payload = kwargs.get("json") or {}
+        return empty if payload.get("stream") else blocked
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    assert llm.call_llm("hello", use_cache=False) == "from blocking"
+    captured = capsys.readouterr().out
+    assert "QUICK_STUDY_ERROR:" in captured
+    assert "empty stream" in captured.lower() or "non-stream" in captured.lower()
+
+
+def test_missing_openrouter_key_has_stable_prefix(monkeypatch):
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "")
+    with pytest.raises(ValueError, match="QUICK_STUDY_ERROR:.*OPENROUTER_API_KEY"):
+        llm.call_llm("hello", use_cache=False)

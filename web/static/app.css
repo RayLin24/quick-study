@@ -177,6 +177,16 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#cancel-btn {
+  background: #64748b;
+}
+
 .error {
   color: var(--color-destructive);
   margin: 0 0 12px;

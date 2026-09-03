@@ -62,6 +62,7 @@ def test_failed_job_exposes_exit_reason(tmp_path: Path):
     assert snap["status"] == "failed"
     assert "进程退出码 2" in snap["error"]
     assert "OPENROUTER_API_KEY" in snap["error"]
+    assert "QUICK_STUDY_ERROR:" in snap["error"]
 
 
 def test_home_defaults_to_chinese(tmp_path: Path):
@@ -69,6 +70,36 @@ def test_home_defaults_to_chinese(tmp_path: Path):
     page = client.get("/")
     assert page.status_code == 200
     assert 'option value="Chinese" selected' in page.text
+    assert 'name="include"' in page.text
+    assert 'name="exclude"' in page.text
+    assert 'name="max_size"' in page.text
+
+
+def test_start_job_passes_shrink_params(tmp_path: Path):
+    seen = {}
+
+    def runner(cmd, on_line, cwd):
+        seen["cmd"] = cmd
+        return 0
+
+    client = TestClient(_app(tmp_path, runner))
+    res = client.post(
+        "/api/jobs",
+        json={
+            "source_type": "repo",
+            "repo_url": "https://github.com/owner/repo/tree/main",
+            "include": "*.py",
+            "exclude": "tests/*",
+            "max_size": 12345,
+        },
+    )
+    assert res.status_code == 200
+    client.app.state.manager.wait(timeout=5)
+    cmd = seen["cmd"]
+    assert "--include" in cmd and "*.py" in cmd
+    assert "--exclude" in cmd and "tests/*" in cmd
+    assert "--max-size" in cmd and "12345" in cmd
+    assert "--token" not in cmd
 
 
 def test_open_jbeval_fixture_tutorial(tmp_path: Path):
@@ -93,6 +124,40 @@ def test_open_jbeval_fixture_tutorial(tmp_path: Path):
     assert "测试概览" in chapter.text
     assert "<h1>" in chapter.text
     assert "```" not in chapter.text or "<pre>" in chapter.text
+    assert '<figure class="cover">' not in chapter.text
+    assert "cdn.jsdelivr.net" not in chapter.text
+    assert "/static/vendor/mermaid.min.js" in chapter.text
+    assert "/static/vendor/highlight.min.js" in chapter.text
+    vendor = Path(__file__).resolve().parents[1] / "web" / "static" / "vendor"
+    assert (vendor / "mermaid.min.js").is_file()
+    assert (vendor / "highlight.min.js").is_file()
+    assert (vendor / "github.min.css").is_file()
+    mermaid_head = (vendor / "mermaid.min.js").read_text(encoding="utf-8", errors="replace")[:80]
+    assert not mermaid_head.lstrip().startswith("<")
+
+
+def test_cancel_endpoint_stops_running_job(tmp_path: Path):
+    gate = tmp_path / "gate"
+
+    def runner(cmd, on_line, cwd):
+        on_line("working")
+        while not gate.exists():
+            pass
+        return 0
+
+    client = TestClient(_app(tmp_path, runner))
+    started = client.post(
+        "/api/jobs",
+        json={"source_type": "repo", "repo_url": "https://github.com/owner/repo"},
+    )
+    assert started.status_code == 200
+    cancelled = client.post("/api/jobs/current/cancel")
+    assert cancelled.status_code == 200
+    gate.write_text("ok", encoding="utf-8")
+    client.app.state.manager.wait(timeout=5)
+    snap = client.get("/api/jobs/current").json()
+    assert snap["status"] == "cancelled"
+    assert "QUICK_STUDY_ERROR:" in (snap.get("error") or "")
 
 
 def test_second_job_returns_conflict(tmp_path: Path):

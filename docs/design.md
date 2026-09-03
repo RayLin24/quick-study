@@ -39,7 +39,7 @@ nav_order: 2
 This project primarily uses a **Workflow** pattern to decompose the tutorial generation process into sequential steps. The chapter writing step utilizes a **BatchNode** (a form of MapReduce) to process each abstraction individually.
 
 1.  **Workflow:** The overall process follows a defined sequence: fetch code -> identify abstractions -> analyze relationships -> determine order -> write chapters -> combine tutorial into files.
-2.  **Batch Processing:** The `WriteChapters` node processes each identified abstraction independently (map) before the final tutorial files are structured (reduce).
+2.  **Batch Processing:** `WriteChapters` is an `AsyncParallelBatchNode`: chapters are written concurrently (not serially from the previous chapter's text). `CombineTutorial` then writes the files.
 
 ### Flow high-level Design:
 
@@ -47,7 +47,7 @@ This project primarily uses a **Workflow** pattern to decompose the tutorial gen
 2.  **`IdentifyAbstractions`**: Analyzes the codebase using an LLM to identify up to 10 core abstractions, generate beginner-friendly descriptions (potentially translated if language != English), and list the *indices* of files related to each abstraction.
 3.  **`AnalyzeRelationships`**: Uses an LLM to analyze the identified abstractions (referenced by index) and their related code to generate a high-level project summary and describe the relationships/interactions between these abstractions (summary and labels potentially translated if language != English), specifying *source* and *target* abstraction indices and a concise label for each interaction.
 4.  **`OrderChapters`**: Determines the most logical order (as indices) to present the abstractions in the tutorial, considering input context which might be translated. The output order itself is language-independent.
-5.  **`WriteChapters` (BatchNode)**: Iterates through the ordered list of abstraction indices. For each abstraction, it calls an LLM to write a detailed, beginner-friendly chapter (content potentially fully translated if language != English), using the relevant code files (accessed via indices) and summaries of previously generated chapters (potentially translated) as context.
+5.  **`WriteChapters` (AsyncParallelBatchNode)**: Writes chapters concurrently (bounded by `LLM_MAX_CONCURRENCY`, default 5). Each chapter call is independent and uses the chapter outline plus related file snippets (with source paths). It does **not** wait for previous chapter text. YAML planning nodes (identify / relationships / order) use temperature 0.2 and 2–3 retries.
 6.  **`CombineTutorial`**: Creates an output directory, generates a Mermaid diagram from the relationship data (using potentially translated names/labels), and writes the project summary (potentially translated), relationship diagram, chapter links (using potentially translated names), and individually generated chapter files (potentially translated content) into it. Fixed text like "Chapters", "Source Repository", and the attribution footer remain in English.
 
 ```mermaid
@@ -55,7 +55,7 @@ flowchart TD
     A[FetchRepo] --> B[IdentifyAbstractions];
     B --> C[AnalyzeRelationships];
     C --> D[OrderChapters];
-    D --> E[Batch WriteChapters];
+    D --> E[Parallel WriteChapters];
     E --> F[CombineTutorial];
 ```
 
@@ -151,12 +151,12 @@ shared = {
         *   `post`: Write the validated ordered list of indices (`chapter_order`) to the shared store.
 
 5.  **`WriteChapters`**
-    *   *Purpose*: Generate the detailed content for each chapter of the tutorial. Generates potentially fully translated chapter content if language is not English.
-    *   *Type*: **BatchNode**
+    *   *Purpose*: Generate the detailed content for each chapter of the tutorial. Generates potentially fully translated chapter content if language is not English. Each code block must cite its source path.
+    *   *Type*: **AsyncParallelBatchNode** (chapters run concurrently; outline is shared, previous chapter bodies are not)
     *   *Steps*:
-        *   `prep`: Read `chapter_order` (indices), `abstractions`, `files`, `project_name`, and `language` from shared store. Initialize an empty instance variable `self.chapters_written_so_far`. Return an iterable list where each item corresponds to an *abstraction index* from `chapter_order`. Each item should contain chapter number, potentially translated abstraction details, a map of related file content (`{ "idx # path": content }`), full chapter listing (potentially translated names), chapter filename map, previous/next chapter info (potentially translated names), and language.
-        *   `exec(item)`: Construct a prompt for `call_llm`. If language is not English, add detailed instructions to write the *entire* chapter in the target language, translating explanations, examples, etc., while noting which input context might already be translated. Ask LLM to write a beginner-friendly Markdown chapter. Provide potentially translated concept details. Include a summary of previously written chapters (potentially translated). Provide relevant code snippets. Add the generated (potentially translated) chapter content to `self.chapters_written_so_far` for the next iteration's context. Return the chapter content.
-        *   `post(shared, prep_res, exec_res_list)`: `exec_res_list` contains the generated chapter Markdown content strings (potentially translated), ordered correctly. Assign this list directly to `shared["chapters"]`. Clean up `self.chapters_written_so_far`.
+        *   `prep`: Read `chapter_order` (indices), `abstractions`, `files`, `project_name`, and `language` from shared store. Return an iterable list where each item corresponds to an *abstraction index* from `chapter_order`. Each item should contain chapter number, potentially translated abstraction details, a map of related file content (`{ "idx # path": content }`), full chapter listing/outline (potentially translated names), chapter filename map, previous/next chapter info (potentially translated names), and language.
+        *   `exec(item)`: Construct a prompt for `call_llm`. If language is not English, add detailed instructions to write the *entire* chapter in the target language. Ask LLM to write a beginner-friendly Markdown chapter and label every code block with its source path. Provide potentially translated concept details and relevant code snippets. Return the chapter content.
+        *   `post(shared, prep_res, exec_res_list)`: `exec_res_list` contains the generated chapter Markdown content strings (potentially translated), ordered correctly. Assign this list directly to `shared["chapters"]`.
 
 6.  **`CombineTutorial`**
     *   *Purpose*: Assemble the final tutorial files, including a Mermaid diagram using potentially translated labels/names. Fixed text remains English.

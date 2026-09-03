@@ -8,6 +8,11 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
+try:
+    from utils.errors import format_error
+except ImportError:  # python utils/call_llm.py
+    from errors import format_error
+
 load_dotenv()
 
 # Configure logging
@@ -79,8 +84,24 @@ def _provider_error_text(payload) -> str | None:
     return str(err)
 
 
+def llm_identity() -> tuple[str, str]:
+    provider = get_llm_provider()
+    if provider == "OPENROUTER":
+        model = _clean_env("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL)
+    elif provider == "GEMINI":
+        model = os.getenv("GEMINI_MODEL", "gemini-2.5-pro-exp-03-25")
+    else:
+        model = _clean_env(f"{provider}_MODEL") or "unknown"
+    return provider, model
+
+
+def _cache_material(prompt: str) -> str:
+    provider, model = llm_identity()
+    return f"{provider}\n{model}\n{prompt}"
+
+
 def _cache_path(prompt: str) -> str:
-    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(_cache_material(prompt).encode("utf-8")).hexdigest()
     return os.path.join(cache_dir, f"{digest}.json")
 
 
@@ -109,7 +130,8 @@ def load_cache(prompt: str):
         pass
     except Exception:
         logger.warning("Failed to read cache entry.")
-    return _load_legacy_cache().get(prompt)
+    # Legacy blob was prompt-only and leaked answers across models. Ignore it.
+    return None
 
 
 def save_cache(prompt: str, response: str) -> None:
@@ -121,7 +143,12 @@ def save_cache(prompt: str, response: str) -> None:
         # Write then rename so parallel chapter jobs never read a half-written entry.
         tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
         with open(tmp, 'w', encoding='utf-8') as f:
-            json.dump({"prompt": prompt, "response": response}, f, ensure_ascii=False)
+            provider, model = llm_identity()
+            json.dump(
+                {"provider": provider, "model": model, "prompt": prompt, "response": response},
+                f,
+                ensure_ascii=False,
+            )
         os.replace(tmp, path)
     except Exception:
         logger.warning("Failed to save cache")
@@ -285,7 +312,7 @@ def _blocking_chat_completion(url, headers, payload) -> str:
         raise Exception(error_message)
 
 
-def _call_llm_provider(prompt: str, progress: _Progress) -> str:
+def _call_llm_provider(prompt: str, progress: _Progress, temperature: float = 0.7) -> str:
     """
     Call an OpenAI-compatible chat completions API.
 
@@ -312,15 +339,15 @@ def _call_llm_provider(prompt: str, progress: _Progress) -> str:
         base_url = _clean_env(base_url_var, DEFAULT_OPENROUTER_BASE_URL)
         api_key = _clean_env(api_key_var)
         if not api_key:
-            raise ValueError(missing_openrouter_key_message())
+            raise ValueError(format_error(missing_openrouter_key_message()))
     else:
         model = _clean_env(model_var)
         base_url = _clean_env(base_url_var)
         api_key = _clean_env(api_key_var)
         if not model:
-            raise ValueError(f"{model_var} environment variable is required")
+            raise ValueError(format_error(f"{model_var} environment variable is required"))
         if not base_url:
-            raise ValueError(f"{base_url_var} environment variable is required")
+            raise ValueError(format_error(f"{base_url_var} environment variable is required"))
 
     url = chat_completions_url(base_url)
 
@@ -333,7 +360,7 @@ def _call_llm_provider(prompt: str, progress: _Progress) -> str:
     payload = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 0.7,
+        "temperature": temperature,
     }
 
     try:
@@ -341,7 +368,12 @@ def _call_llm_provider(prompt: str, progress: _Progress) -> str:
             try:
                 return _stream_chat_completion(url, headers, payload, progress)
             except EmptyLLMResponse:
-                logger.warning("Streaming response empty; retrying without stream")
+                # Second billed request — must not be silent.
+                msg = format_error(
+                    "empty streaming response; falling back to non-stream (extra LLM request)"
+                )
+                logger.warning(msg)
+                _emit(msg)
                 return _blocking_chat_completion(url, headers, payload)
             except Exception as exc:
                 status = None
@@ -372,7 +404,12 @@ def _call_llm_provider(prompt: str, progress: _Progress) -> str:
 
 
 # Default: OpenRouter z-ai/glm-5.3-flash. Gemini is opt-in via LLM_PROVIDER=GEMINI.
-def call_llm(prompt: str, use_cache: bool = True, progress_label: str = None) -> str:
+def call_llm(
+    prompt: str,
+    use_cache: bool = True,
+    progress_label: str = None,
+    temperature: float = 0.7,
+) -> str:
     logger.info(_prompt_log_text(prompt))
 
     # Check cache if enabled
@@ -388,8 +425,8 @@ def call_llm(prompt: str, use_cache: bool = True, progress_label: str = None) ->
     provider = get_llm_provider()
     if provider == "GEMINI":
         response_text = _call_llm_gemini(prompt)
-    else:  # generic method using a URL that is OpenAI compatible API (Ollama, ...)
-        response_text = _call_llm_provider(prompt, progress)
+    else:
+        response_text = _call_llm_provider(prompt, progress, temperature=temperature)
     progress.done()
 
     # Log the response
@@ -451,6 +488,6 @@ if __name__ == "__main__":
     try:
         response1 = call_llm(test_prompt, use_cache=False)
     except Exception as exc:
-        print(f"LLM call failed: {exc}")
+        print(format_error(exc))
         raise SystemExit(1) from exc
     print(f"Response: {response1}")
