@@ -249,7 +249,9 @@ button:disabled {
 
 .cards a {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   min-height: 44px;
   padding: 10px 14px;
   border: 1px solid var(--color-border);
@@ -258,6 +260,100 @@ button:disabled {
   color: var(--color-foreground);
   background: var(--color-muted);
   transition: border-color 180ms ease;
+}
+
+.card-name {
+  font-weight: 600;
+}
+
+.card-meta {
+  color: var(--color-secondary);
+  font-size: 0.8rem;
+}
+
+.step-progress {
+  margin: 0 0 12px;
+}
+
+.step-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-muted);
+  overflow: hidden;
+}
+
+.step-bar-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--color-accent);
+}
+
+.step-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 0.8rem;
+  color: var(--color-secondary);
+}
+
+.step-list li.is-current {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.step-list li.is-done {
+  color: #15803d;
+}
+
+.page-toc {
+  margin: 0 0 24px;
+  padding: 12px 16px;
+  border: 1px solid #eadfcf;
+  border-radius: 12px;
+  background: #fff8ef;
+}
+
+.page-toc h2 {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+}
+
+.page-toc ol {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.ask-box {
+  margin-top: 36px;
+  padding-top: 20px;
+  border-top: 1px solid #eadfcf;
+}
+
+.ask-hint {
+  color: var(--color-secondary);
+  font-size: 0.9rem;
+}
+
+.ask-box textarea {
+  width: 100%;
+  min-height: 88px;
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.ask-answer {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  white-space: pre-wrap;
 }
 
 .cards a:hover {

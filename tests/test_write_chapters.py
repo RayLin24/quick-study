@@ -26,6 +26,27 @@ def test_finalize_chapter_rejects_heading_only():
         finalize_chapter("", chapter_num=1, abstraction_name="入口")
 
 
+def test_write_chapters_prep_includes_relationship_edges():
+    shared = {
+        "chapter_order": [0, 1],
+        "abstractions": [
+            {"name": "入口", "description": "desc A", "files": []},
+            {"name": "核心", "description": "desc B", "files": []},
+        ],
+        "files": [],
+        "project_name": "demo",
+        "language": "chinese",
+        "use_cache": True,
+        "relationships": {"details": [{"from": 0, "to": 1, "label": "调用"}]},
+    }
+
+    items = asyncio.run(WriteChapters().prep_async(shared))
+    assert len(items) == 2
+    assert "调用" in items[0]["relationship_edges"]
+    assert "01_" in items[0]["relationship_edges"] or "核心" in items[0]["relationship_edges"]
+    assert items[1]["relationship_edges"]
+
+
 def test_finalize_chapter_keeps_real_body():
     body = "# Chapter 1: 入口\n\n" + ("一段说明。" * 40)
     assert finalize_chapter(body, chapter_num=1, abstraction_name="入口").startswith("# Chapter 1:")

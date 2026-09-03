@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from webapp import create_app
@@ -65,6 +66,19 @@ def test_failed_job_exposes_exit_reason(tmp_path: Path):
     assert "QUICK_STUDY_ERROR:" in snap["error"]
 
 
+def test_public_bind_without_token_refuses_to_start(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("QUICK_STUDY_TOKEN", raising=False)
+    app = create_app(
+        output_dir=tmp_path / "output",
+        runner=lambda cmd, on_line, cwd: 0,
+        python_exe="python",
+        bind_host="0.0.0.0",
+    )
+    with pytest.raises(RuntimeError, match="QUICK_STUDY_TOKEN"):
+        with TestClient(app):
+            pass
+
+
 def test_home_defaults_to_chinese(tmp_path: Path):
     client = TestClient(_app(tmp_path, lambda cmd, on_line, cwd: 0))
     page = client.get("/")
@@ -111,7 +125,8 @@ def test_open_jbeval_fixture_tutorial(tmp_path: Path):
 
     client = TestClient(_app(tmp_path, lambda cmd, on_line, cwd: 0))
     listed = client.get("/api/tutorials").json()
-    assert {"name": "export-run1"} in listed["items"]
+    assert "export-run1" in [item["name"] for item in listed["items"]]
+    assert any(item.get("mtime") for item in listed["items"] if item["name"] == "export-run1")
 
     index = client.get("/t/export-run1")
     assert index.status_code == 200
@@ -158,6 +173,55 @@ def test_cancel_endpoint_stops_running_job(tmp_path: Path):
     snap = client.get("/api/jobs/current").json()
     assert snap["status"] == "cancelled"
     assert "QUICK_STUDY_ERROR:" in (snap.get("error") or "")
+
+
+def test_success_snapshot_includes_usage(tmp_path: Path):
+    output = tmp_path / "output"
+
+    def runner(cmd, on_line, cwd):
+        dest = output / "repo"
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "index.md").write_text("# Hello\n", encoding="utf-8")
+        on_line("QUICK_STUDY_STEP: combine")
+        on_line("QUICK_STUDY_USAGE: prompt=12 completion=34 total=46 calls=3 max_tokens=8192")
+        on_line(f"Tutorial generation complete! Files are in: {dest}")
+        return 0
+
+    client = TestClient(_app(tmp_path, runner))
+    started = client.post(
+        "/api/jobs",
+        json={"source_type": "repo", "repo_url": "https://github.com/owner/repo"},
+    )
+    assert started.status_code == 200
+    client.app.state.manager.wait(timeout=5)
+    snap = client.get("/api/jobs/current").json()
+    assert snap["status"] == "succeeded"
+    assert snap["usage"]["total_tokens"] == 46
+    assert snap["usage"]["prompt_tokens"] == 12
+    assert snap["usage"]["max_tokens"] == 8192
+    assert snap["step"] == "combine"
+
+
+def test_ask_refuses_when_tutorial_missing(tmp_path: Path):
+    client = TestClient(_app(tmp_path, lambda cmd, on_line, cwd: 0))
+    res = client.post("/api/tutorials/NoSuch/ask", json={"question": "入口在哪"})
+    assert res.status_code == 400
+    assert "还没有生成" in res.json()["detail"]
+
+
+def test_ask_answers_from_existing_tutorial(tmp_path: Path):
+    dest = tmp_path / "output" / "Demo"
+    dest.mkdir(parents=True)
+    (dest / "index.md").write_text("# Demo\n\n*source: src/a.py*\n", encoding="utf-8")
+
+    def ask_fn(folder, question):
+        return f"from {folder.name}: {question}"
+
+    app = create_app(output_dir=tmp_path / "output", runner=lambda cmd, on_line, cwd: 0, python_exe="python", ask_fn=ask_fn)
+    client = TestClient(app)
+    res = client.post("/api/tutorials/Demo/ask", json={"question": "是什么"})
+    assert res.status_code == 200
+    assert res.json()["answer"] == "from Demo: 是什么"
 
 
 def test_second_job_returns_conflict(tmp_path: Path):

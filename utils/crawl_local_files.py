@@ -2,6 +2,11 @@ import os
 import fnmatch
 import pathspec
 
+try:
+    from utils.patterns import should_include_file
+except ImportError:  # python utils/crawl_local_files.py
+    from patterns import should_include_file
+
 
 def crawl_local_files(
     directory,
@@ -71,24 +76,10 @@ def crawl_local_files(
         relpath = os.path.relpath(filepath, directory) if use_relative_paths else filepath
 
         # --- Exclusion check ---
-        excluded = False
-        if gitignore_spec and gitignore_spec.match_file(relpath):
-            excluded = True
-
-        if not excluded and exclude_patterns:
-            for pattern in exclude_patterns:
-                if fnmatch.fnmatch(relpath, pattern):
-                    excluded = True
-                    break
-
-        included = False
-        if include_patterns:
-            for pattern in include_patterns:
-                if fnmatch.fnmatch(relpath, pattern):
-                    included = True
-                    break
-        else:
-            included = True
+        excluded = bool(gitignore_spec and gitignore_spec.match_file(relpath))
+        included = (not excluded) and should_include_file(
+            relpath, include_patterns, exclude_patterns
+        )
 
         processed_files += 1 # Increment processed count regardless of inclusion/exclusion
 

@@ -49,8 +49,12 @@ CHAT_COMPLETIONS_PATH = "/v1/chat/completions"
 DEFAULT_TIMEOUT_SECONDS = 300
 
 request_timeout = (10, float(os.getenv("LLM_TIMEOUT_SECONDS", str(DEFAULT_TIMEOUT_SECONDS))))
-stream_enabled = os.getenv("LLM_STREAM", "1").lower() not in ("0", "false", "no")
+# Default stream off: an empty SSE body plus a blocking retry is a second billed call.
+stream_enabled = os.getenv("LLM_STREAM", "0").lower() not in ("0", "false", "no")
+stream_fallback_enabled = os.getenv("LLM_STREAM_FALLBACK", "0").lower() not in ("0", "false", "no")
 progress_interval = float(os.getenv("LLM_PROGRESS_SECONDS", "5"))
+_raw_max_tokens = os.getenv("LLM_MAX_TOKENS", "").strip()
+max_tokens = int(_raw_max_tokens) if _raw_max_tokens.isdigit() and int(_raw_max_tokens) > 0 else None
 
 _print_lock = threading.Lock()
 _legacy_cache = None
@@ -60,6 +64,62 @@ STREAM_FALLBACK_STATUSES = {400, 404, 415, 422}
 
 class EmptyLLMResponse(Exception):
     """The provider returned HTTP 200 but no usable text."""
+
+
+class UsageMeter:
+    """Process-wide token totals for the success card / CLI summary."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
+        self.total_tokens = 0
+        self.calls = 0
+
+    def add(self, usage) -> None:
+        if not isinstance(usage, dict):
+            return
+        prompt = int(usage.get("prompt_tokens") or 0)
+        completion = int(usage.get("completion_tokens") or 0)
+        total = int(usage.get("total_tokens") or (prompt + completion))
+        if prompt == 0 and completion == 0 and total == 0:
+            return
+        with self._lock:
+            self.prompt_tokens += prompt
+            self.completion_tokens += completion
+            self.total_tokens += total
+            self.calls += 1
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "prompt_tokens": self.prompt_tokens,
+                "completion_tokens": self.completion_tokens,
+                "total_tokens": self.total_tokens,
+                "calls": self.calls,
+                "max_tokens": max_tokens,
+            }
+
+    def format_line(self) -> str:
+        snap = self.snapshot()
+        extra = f" max_tokens={snap['max_tokens']}" if snap["max_tokens"] else ""
+        return (
+            f"QUICK_STUDY_USAGE: prompt={snap['prompt_tokens']} "
+            f"completion={snap['completion_tokens']} total={snap['total_tokens']} "
+            f"calls={snap['calls']}{extra}"
+        )
+
+
+usage_meter = UsageMeter()
+
+
+def parse_usage(payload) -> dict | None:
+    if not isinstance(payload, dict):
+        return None
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    return usage
 
 
 def _prompt_log_text(prompt: str, limit: int = 4000) -> str:
@@ -245,8 +305,14 @@ def _decode_sse_line(raw) -> str:
     return text
 
 
+def _apply_max_tokens(payload: dict) -> dict:
+    if max_tokens:
+        payload = {**payload, "max_tokens": max_tokens}
+    return payload
+
+
 def _stream_chat_completion(url, headers, payload, progress: _Progress) -> str:
-    payload = {**payload, "stream": True}
+    payload = _apply_max_tokens({**payload, "stream": True, "stream_options": {"include_usage": True}})
     with requests.post(
         url, headers=headers, json=payload, timeout=request_timeout, stream=True
     ) as response:
@@ -256,6 +322,7 @@ def _stream_chat_completion(url, headers, payload, progress: _Progress) -> str:
             )
         response.encoding = "utf-8"
         parts = []
+        last_usage = None
         for raw in response.iter_lines(decode_unicode=False):
             line = _decode_sse_line(raw)
             if not line or not line.startswith("data:"):
@@ -270,6 +337,9 @@ def _stream_chat_completion(url, headers, payload, progress: _Progress) -> str:
             error_text = _provider_error_text(chunk)
             if error_text:
                 raise Exception(f"LLM stream error: {error_text}")
+            usage = parse_usage(chunk)
+            if usage:
+                last_usage = usage
             choices = chunk.get("choices") or []
             if not choices:
                 continue
@@ -286,6 +356,8 @@ def _stream_chat_completion(url, headers, payload, progress: _Progress) -> str:
             thinking = delta.get("reasoning") or delta.get("reasoning_content")
             if thinking:
                 progress.add(len(thinking), thinking=True)
+    if last_usage:
+        usage_meter.add(last_usage)
     text = "".join(parts)
     if not text.strip():
         raise EmptyLLMResponse("Streaming response contained no content")
@@ -294,10 +366,13 @@ def _stream_chat_completion(url, headers, payload, progress: _Progress) -> str:
 
 def _blocking_chat_completion(url, headers, payload) -> str:
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=request_timeout)
+        response = requests.post(
+            url, headers=headers, json=_apply_max_tokens(payload), timeout=request_timeout
+        )
         response_json = response.json()
         logger.info("RESPONSE:\n%s", json.dumps(response_json, indent=2))
         response.raise_for_status()
+        usage_meter.add(parse_usage(response_json))
         text = response_json["choices"][0]["message"]["content"] or ""
         if not text.strip():
             raise EmptyLLMResponse("Blocking response contained no content")
@@ -368,7 +443,9 @@ def _call_llm_provider(prompt: str, progress: _Progress, temperature: float = 0.
             try:
                 return _stream_chat_completion(url, headers, payload, progress)
             except EmptyLLMResponse:
-                # Second billed request — must not be silent.
+                if not stream_fallback_enabled:
+                    raise
+                # Opt-in second billed request — never silent.
                 msg = format_error(
                     "empty streaming response; falling back to non-stream (extra LLM request)"
                 )
@@ -439,6 +516,7 @@ def call_llm(
     if use_cache:
         save_cache(prompt, response_text)
 
+    _emit(usage_meter.format_line())
     return response_text
 
 

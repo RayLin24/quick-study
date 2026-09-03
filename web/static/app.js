@@ -6,6 +6,11 @@ const logEl = document.getElementById("log");
 const statusEl = document.getElementById("job-status");
 const resultEl = document.getElementById("result");
 const listEl = document.getElementById("tutorial-list");
+const stepProgress = document.getElementById("step-progress");
+const stepBarFill = document.getElementById("step-bar-fill");
+const stepList = document.getElementById("step-list");
+
+const STEP_ORDER = ["fetch", "identify", "relationships", "order", "write", "combine"];
 
 let eventSource = null;
 let logCursor = 0;
@@ -58,10 +63,60 @@ async function refreshTutorials() {
     const li = document.createElement("li");
     const a = document.createElement("a");
     a.href = `/t/${encodeURIComponent(item.name)}`;
-    a.textContent = item.name;
+    const name = document.createElement("span");
+    name.className = "card-name";
+    name.textContent = item.name;
+    const meta = document.createElement("span");
+    meta.className = "card-meta";
+    const bits = [item.language || "语言未知"];
+    if (item.mtime) bits.push(item.mtime);
+    meta.textContent = bits.join(" · ");
+    a.appendChild(name);
+    a.appendChild(meta);
     li.appendChild(a);
     listEl.appendChild(li);
   }
+}
+
+function setStep(step) {
+  if (!stepProgress || !step) {
+    return;
+  }
+  stepProgress.hidden = false;
+  const index = STEP_ORDER.indexOf(step);
+  const current = index >= 0 ? index + 1 : 0;
+  if (stepBarFill) {
+    stepBarFill.style.width = `${(current / STEP_ORDER.length) * 100}%`;
+  }
+  const bar = stepProgress.querySelector(".step-bar");
+  if (bar) {
+    bar.setAttribute("aria-valuenow", String(current));
+  }
+  if (stepList) {
+    stepList.querySelectorAll("li").forEach((li) => {
+      const name = li.getAttribute("data-step");
+      const pos = STEP_ORDER.indexOf(name);
+      li.classList.toggle("is-done", pos >= 0 && pos < index);
+      li.classList.toggle("is-current", name === step);
+    });
+  }
+}
+
+function usageText(usage) {
+  if (!usage) {
+    return "";
+  }
+  const parts = [];
+  if (usage.total_tokens != null) {
+    parts.push(`tokens ${usage.prompt_tokens || 0}+${usage.completion_tokens || 0}=${usage.total_tokens}`);
+  }
+  if (usage.max_tokens) {
+    parts.push(`max_tokens=${usage.max_tokens}`);
+  }
+  if (usage.calls) {
+    parts.push(`${usage.calls} 次调用`);
+  }
+  return parts.join(" · ");
 }
 
 function showResult(snap) {
@@ -78,6 +133,10 @@ function showResult(snap) {
     }
     if (snap.map_mode != null) {
       meta.push(`map_mode=${snap.map_mode ? "true" : "false"}`);
+    }
+    const usageLine = usageText(snap.usage);
+    if (usageLine) {
+      meta.push(usageLine);
     }
     if (meta.length) {
       resultEl.appendChild(document.createElement("br"));
@@ -135,10 +194,17 @@ function connectEvents(after) {
     if (payload.type === "log") {
       appendLog(payload.line);
       logCursor += 1;
+      if (payload.step) {
+        setStep(payload.step);
+      } else {
+        const match = /QUICK_STUDY_STEP:\s*(\w+)/.exec(payload.line || "");
+        if (match) setStep(match[1]);
+      }
     }
     if (payload.type === "done") {
       closeEvents();
       setRunning(false);
+      if (payload.step) setStep(payload.step);
       showResult(payload);
     }
   };
@@ -236,6 +302,7 @@ fetch("/api/jobs/current")
       logCursor = snap.log_start || 0;
       (snap.logs || []).forEach(appendLog);
       logCursor = snap.log_cursor || logCursor;
+      if (snap.step) setStep(snap.step);
       connectEvents(logCursor);
     } else if (snap.status === "succeeded" || snap.status === "failed" || snap.status === "cancelled") {
       (snap.logs || []).forEach(appendLog);

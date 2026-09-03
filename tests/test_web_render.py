@@ -60,8 +60,12 @@ def test_list_tutorials_only_includes_index_markdown(tmp_path: Path):
     output = tmp_path / "output"
     (output / "Ready").mkdir(parents=True)
     (output / "Ready" / "index.md").write_text("# r", encoding="utf-8")
+    (output / "Ready" / "meta.json").write_text('{"language": "Chinese"}', encoding="utf-8")
     (output / "Empty").mkdir()
-    assert list_tutorials(output) == [{"name": "Ready"}]
+    items = list_tutorials(output)
+    assert [item["name"] for item in items] == ["Ready"]
+    assert "mtime" in items[0]
+    assert items[0]["language"] == "Chinese"
 
 
 def test_list_tutorials_accepts_readme_index(tmp_path: Path):
@@ -70,7 +74,9 @@ def test_list_tutorials_accepts_readme_index(tmp_path: Path):
     folder.mkdir(parents=True)
     (folder / "README.md").write_text("# DSH\n", encoding="utf-8")
     (folder / "01-测试概览.md").write_text("# 概览\n", encoding="utf-8")
-    assert list_tutorials(output) == [{"name": "export-run1"}]
+    items = list_tutorials(output)
+    assert [item["name"] for item in items] == ["export-run1"]
+    assert "mtime" in items[0]
     assert resolve_tutorial_file(output, "export-run1", "index.md").name == "README.md"
 
 

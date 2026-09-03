@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import re
 import yaml
@@ -7,6 +8,7 @@ from utils.crawl_github_files import crawl_github_files, GitHubCrawlError, parse
 from utils.call_llm import call_llm
 from utils.crawl_local_files import crawl_local_files
 from utils.errors import format_error
+from utils.progress import emit_step
 from utils.repo_map import build_repo_map, expand_abstraction_files
 
 # Chapters are written concurrently; keep enough headroom that the provider does not
@@ -199,6 +201,7 @@ class FetchRepo(Node):
         }
 
     def exec(self, prep_res):
+        emit_step("fetch")
         if prep_res["repo_url"]:
             print(f"Crawling repository: {prep_res['repo_url']}...")
             try:
@@ -294,6 +297,7 @@ class IdentifyAbstractions(Node):
             max_abstraction_num,
             map_mode,
         ) = prep_res
+        emit_step("identify")
         print(f"Identifying abstractions using LLM...")
 
         # Add language instruction and hints only if not English
@@ -464,6 +468,7 @@ class AnalyzeRelationships(Node):
             language,
             use_cache,
          ) = prep_res  # Unpack use_cache
+        emit_step("relationships")
         print(f"Analyzing relationships using LLM...")
 
         # Add language instruction and hints only if not English
@@ -631,6 +636,7 @@ class OrderChapters(Node):
             list_lang_note,
             use_cache,
         ) = prep_res  # Unpack use_cache
+        emit_step("order")
         print("Determining chapter order using LLM...")
         # No language variation needed here in prompt instructions, just ordering based on structure
         # The input names might be translated, hence the note.
@@ -717,7 +723,9 @@ class WriteChapters(AsyncParallelBatchNode):
         project_name = shared["project_name"]
         language = shared.get("language", "english")
         use_cache = shared.get("use_cache", True)  # Get use_cache flag, default to True
+        relationships = (shared.get("relationships") or {}).get("details") or []
 
+        emit_step("write")
         self._semaphore = asyncio.Semaphore(CHAPTER_CONCURRENCY)
         self._attempts = {}
 
@@ -752,6 +760,27 @@ class WriteChapters(AsyncParallelBatchNode):
         # Create a formatted string with all chapters
         full_chapter_listing = "\n".join(all_chapters)
         full_chapter_outline = "\n".join(chapter_outline)
+
+        def relationship_edges_for(abstraction_index: int) -> str:
+            lines = []
+            here = chapter_filenames.get(abstraction_index)
+            here_name = here["name"] if here else str(abstraction_index)
+            for rel in relationships:
+                if rel.get("from") == abstraction_index:
+                    other = chapter_filenames.get(rel.get("to"))
+                    if other:
+                        lines.append(
+                            f'- "{here_name}" --{rel.get("label", "")}--> '
+                            f'[{other["name"]}]({other["filename"]})'
+                        )
+                elif rel.get("to") == abstraction_index:
+                    other = chapter_filenames.get(rel.get("from"))
+                    if other:
+                        lines.append(
+                            f'- [{other["name"]}]({other["filename"]}) '
+                            f'--{rel.get("label", "")}--> "{here_name}"'
+                        )
+            return "\n".join(lines) if lines else "No relationship edges for this chapter."
 
         items_to_process = []
         for i, abstraction_index in enumerate(chapter_order):
@@ -792,6 +821,7 @@ class WriteChapters(AsyncParallelBatchNode):
                         "next_chapter": next_chapter,  # Add next chapter info (uses potentially translated name)
                         "language": language,  # Add language for multi-language support
                         "use_cache": use_cache, # Pass use_cache flag
+                        "relationship_edges": relationship_edges_for(abstraction_index),
                     }
                 )
             else:
@@ -859,6 +889,10 @@ What every chapter of this tutorial covers{outline_note}. Chapters are written i
 so do NOT assume wording from another chapter; when a topic belongs to another chapter, link to
 it instead of explaining it again:
 {item["full_chapter_outline"]}
+
+Relationship edges for this chapter (stay parallel — do not wait for other chapter bodies;
+use these Markdown links when mentioning related abstractions):
+{item.get("relationship_edges") or "No relationship edges for this chapter."}
 
 Relevant Code Snippets (Code itself remains unchanged):
 {file_context_str if file_context_str else "No specific code snippets provided for this abstraction."}
@@ -1021,6 +1055,9 @@ class CombineTutorial(Node):
             "output_path": output_path,
             "index_content": index_content,
             "chapter_files": chapter_files,  # List of {"filename": str, "content": str}
+            "language": shared.get("language", "english"),
+            "project_name": project_name,
+            "file_count": file_count,
         }
 
     def exec(self, prep_res):
@@ -1028,6 +1065,7 @@ class CombineTutorial(Node):
         index_content = prep_res["index_content"]
         chapter_files = prep_res["chapter_files"]
 
+        emit_step("combine")
         print(f"Combining tutorial into directory: {output_path}")
         # Rely on Node's built-in retry/fallback
         os.makedirs(output_path, exist_ok=True)
@@ -1044,6 +1082,16 @@ class CombineTutorial(Node):
             with open(chapter_filepath, "w", encoding="utf-8") as f:
                 f.write(chapter_info["content"])
             print(f"  - Wrote {chapter_filepath}")
+
+        meta = {
+            "name": prep_res.get("project_name"),
+            "language": prep_res.get("language") or "english",
+            "file_count": prep_res.get("file_count"),
+        }
+        meta_path = os.path.join(output_path, "meta.json")
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        print(f"  - Wrote {meta_path}")
 
         return output_path  # Return the final path
 
