@@ -9,7 +9,10 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Union, Set, List, Dict, Tuple, Any, Callable, Optional
 from urllib.parse import quote, urlparse
 
-from utils.errors import format_error
+try:
+    from utils.errors import format_error
+except ImportError:  # python utils/crawl_github_files.py
+    from errors import format_error
 
 # Downloads are independent, and a serial crawl spends ~1.6s of round trip per file.
 GITHUB_MAX_CONCURRENCY = int(os.getenv("GITHUB_MAX_CONCURRENCY", "16"))

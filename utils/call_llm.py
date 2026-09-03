@@ -8,7 +8,10 @@ import requests
 from datetime import datetime
 from dotenv import load_dotenv
 
-from utils.errors import format_error
+try:
+    from utils.errors import format_error
+except ImportError:  # python utils/call_llm.py
+    from errors import format_error
 
 load_dotenv()
 
