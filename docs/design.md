@@ -78,7 +78,7 @@ flowchart TD
     *   *Output*: `response` (str)
     *   *Necessity*: Used by `IdentifyAbstractions`, `AnalyzeRelationships`, `OrderChapters`, and `WriteChapters` for code analysis and content generation. Needs careful prompt engineering and YAML validation (implicit via `yaml.safe_load` which raises errors).
     *   *Default*: `LLM_PROVIDER=OPENROUTER`, model `z-ai/glm-5.3-flash`, `POST https://openrouter.ai/api/v1/chat/completions` with `Bearer OPENROUTER_API_KEY`. Timeout 300s. Gemini is optional (`LLM_PROVIDER=GEMINI`).
-    *   *Streaming*: request body has no extra reasoning fields; only `delta.content` is assembled. Thinking may appear in `reasoning` and is used for progress only. Empty stream falls back to a non-stream call.
+    *   *Streaming*: default off (`LLM_STREAM=0`) so an empty SSE does not silently bill a second non-stream call. If streaming is enabled, empty content raises unless `LLM_STREAM_FALLBACK=1`. Request body has no extra reasoning fields; only `delta.content` is assembled. Thinking may appear in `reasoning` and is used for progress only. Optional `LLM_MAX_TOKENS`. Usage (`prompt` / `completion` / `total`) is accumulated and printed as `QUICK_STUDY_USAGE`.
 
 ## Node Design
 
@@ -155,7 +155,7 @@ shared = {
     *   *Type*: **AsyncParallelBatchNode** (chapters run concurrently; outline is shared, previous chapter bodies are not)
     *   *Steps*:
         *   `prep`: Read `chapter_order` (indices), `abstractions`, `files`, `project_name`, and `language` from shared store. Return an iterable list where each item corresponds to an *abstraction index* from `chapter_order`. Each item should contain chapter number, potentially translated abstraction details, a map of related file content (`{ "idx # path": content }`), full chapter listing/outline (potentially translated names), chapter filename map, previous/next chapter info (potentially translated names), and language.
-        *   `exec(item)`: Construct a prompt for `call_llm`. If language is not English, add detailed instructions to write the *entire* chapter in the target language. Ask LLM to write a beginner-friendly Markdown chapter and label every code block with its source path. Provide potentially translated concept details and relevant code snippets. Return the chapter content.
+        *   `exec(item)`: Construct a prompt for `call_llm`. If language is not English, add detailed instructions to write the *entire* chapter in the target language. Ask LLM to write a beginner-friendly Markdown chapter and label every code block with its source path. Provide potentially translated concept details, relevant code snippets, and **relationship edges** (from `AnalyzeRelationships`) so chapters can cross-link while still running in parallel. Return the chapter content.
         *   `post(shared, prep_res, exec_res_list)`: `exec_res_list` contains the generated chapter Markdown content strings (potentially translated), ordered correctly. Assign this list directly to `shared["chapters"]`.
 
 6.  **`CombineTutorial`**

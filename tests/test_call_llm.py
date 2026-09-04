@@ -99,6 +99,7 @@ def test_empty_stream_falls_back_to_blocking(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
     monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
     monkeypatch.setattr(llm, "stream_enabled", True)
+    monkeypatch.setattr(llm, "stream_fallback_enabled", True)
     monkeypatch.setenv("LLM_PROVIDER", "DEEPSEEK")
     monkeypatch.setenv("DEEPSEEK_MODEL", "m")
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.example.test")
@@ -249,7 +250,14 @@ def test_openrouter_default_posts_expected_url(tmp_path, monkeypatch):
     assert captured["url"] == "https://openrouter.ai/api/v1/chat/completions"
     assert captured["headers"]["Authorization"] == "Bearer test-key"
     assert captured["payload"]["model"] == "z-ai/glm-5.3-flash"
-    assert set(captured["payload"]) <= {"model", "messages", "temperature", "stream"}
+    assert set(captured["payload"]) <= {
+        "model",
+        "messages",
+        "temperature",
+        "stream",
+        "stream_options",
+        "max_tokens",
+    }
     assert captured["payload"]["stream"] is True
 
 
@@ -289,6 +297,7 @@ def test_empty_stream_fallback_is_logged(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
     monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
     monkeypatch.setattr(llm, "stream_enabled", True)
+    monkeypatch.setattr(llm, "stream_fallback_enabled", True)
     monkeypatch.setenv("LLM_PROVIDER", "DEEPSEEK")
     monkeypatch.setenv("DEEPSEEK_MODEL", "m")
     monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.example.test")
@@ -310,6 +319,58 @@ def test_empty_stream_fallback_is_logged(tmp_path, monkeypatch, capsys):
     captured = capsys.readouterr().out
     assert "QUICK_STUDY_ERROR:" in captured
     assert "empty stream" in captured.lower() or "non-stream" in captured.lower()
+
+
+def test_empty_stream_does_not_fallback_by_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
+    monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(llm, "stream_enabled", True)
+    monkeypatch.setattr(llm, "stream_fallback_enabled", False)
+    monkeypatch.setenv("LLM_PROVIDER", "DEEPSEEK")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "m")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.example.test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    empty = _sse_response(
+        [
+            'data: {"choices":[{"delta":{"reasoning":"thinking"}}]}',
+            "data: [DONE]",
+        ]
+    )
+    blocked = _completion("from blocking")
+    calls = {"n": 0}
+
+    def post(_url, **kwargs):
+        calls["n"] += 1
+        payload = kwargs.get("json") or {}
+        return empty if payload.get("stream") else blocked
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    with pytest.raises(llm.EmptyLLMResponse):
+        llm.call_llm("hello", use_cache=False)
+    assert calls["n"] == 1
+
+
+def test_blocking_usage_is_recorded(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
+    monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(llm, "stream_enabled", False)
+    monkeypatch.setattr(llm, "usage_meter", llm.UsageMeter())
+    monkeypatch.setenv("LLM_PROVIDER", "DEEPSEEK")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "m")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.example.test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    response = _completion("ok")
+    response.json.return_value["usage"] = {
+        "prompt_tokens": 11,
+        "completion_tokens": 7,
+        "total_tokens": 18,
+    }
+    monkeypatch.setattr(llm.requests, "post", lambda *_a, **_k: response)
+    assert llm.call_llm("hello", use_cache=False) == "ok"
+    snap = llm.usage_meter.snapshot()
+    assert snap["prompt_tokens"] == 11
+    assert snap["completion_tokens"] == 7
+    assert snap["total_tokens"] == 18
 
 
 def test_missing_openrouter_key_has_stable_prefix(monkeypatch):

@@ -35,6 +35,16 @@
       </ol>
     </aside>
     <article class="prose">
+      {% if page_toc %}
+      <nav class="page-toc" aria-label="本页目录">
+        <h2>本页目录</h2>
+        <ol>
+          {% for item in page_toc %}
+          <li><a href="#{{ item.id }}">{{ item.text }}</a></li>
+          {% endfor %}
+        </ol>
+      </nav>
+      {% endif %}
       {{ body | safe }}
       <nav class="pager" aria-label="相邻章节">
         {% if prev_chapter %}
@@ -52,6 +62,17 @@
         </a>
         {% endif %}
       </nav>
+      <section class="ask-box" aria-labelledby="ask-title">
+        <h2 id="ask-title">问这个仓</h2>
+        <p class="ask-hint">只根据已生成的教程和文中 <code># source:</code> 路径回答。没有教程时会拒绝。</p>
+        <label class="field">
+          <span>问题</span>
+          <textarea id="ask-question" rows="3" placeholder="这篇教程里入口在哪里？"></textarea>
+        </label>
+        <button type="button" id="ask-btn">提问</button>
+        <p id="ask-error" class="error" hidden></p>
+        <div id="ask-answer" class="ask-answer" hidden></div>
+      </section>
     </article>
   </div>
 
@@ -74,6 +95,35 @@
         background: "#FFF8EF",
       },
     });
+    const askBtn = document.getElementById("ask-btn");
+    const askQ = document.getElementById("ask-question");
+    const askErr = document.getElementById("ask-error");
+    const askAns = document.getElementById("ask-answer");
+    if (askBtn) {
+      askBtn.addEventListener("click", async () => {
+        askErr.hidden = true;
+        askAns.hidden = true;
+        askBtn.disabled = true;
+        try {
+          const res = await fetch("/api/tutorials/{{ tutorial_name }}/ask", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question: askQ.value }),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.detail || "提问失败");
+          }
+          askAns.hidden = false;
+          askAns.textContent = data.answer;
+        } catch (err) {
+          askErr.hidden = false;
+          askErr.textContent = err.message;
+        } finally {
+          askBtn.disabled = false;
+        }
+      });
+    }
   </script>
 </body>
 </html>

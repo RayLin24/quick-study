@@ -47,7 +47,11 @@ def main():
     source_group.add_argument("--dir", help="Path to local directory.")
 
     parser.add_argument("-n", "--name", help="Project name (optional, derived from repo/directory if omitted).")
-    parser.add_argument("-t", "--token", help="GitHub personal access token (optional, reads from GITHUB_TOKEN env var if not provided).")
+    parser.add_argument(
+        "-t",
+        "--token",
+        help="Deprecated. Use GITHUB_TOKEN in the environment; do not put tokens on argv.",
+    )
     parser.add_argument("-o", "--output", default="output", help="Base directory for output (default: ./output).")
     parser.add_argument("-i", "--include", nargs="+", help="Include file patterns (e.g. '*.py' '*.js'). Defaults to common code files if not specified.")
     parser.add_argument("-e", "--exclude", nargs="+", help="Exclude file patterns (e.g. 'tests/*' 'docs/*'). Defaults to test/build directories if not specified.")
@@ -61,10 +65,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Get GitHub token from argument or environment variable if using repo
+    # GitHub token: environment only. -t is accepted for old scripts but warned.
     github_token = None
     if args.repo:
-        github_token = args.token or os.environ.get('GITHUB_TOKEN')
+        if args.token:
+            print(
+                "Warning: -t/--token puts the secret on argv. "
+                "Set GITHUB_TOKEN in the environment instead."
+            )
+        github_token = os.environ.get("GITHUB_TOKEN") or args.token
         if not github_token:
             print("Warning: No GitHub token provided. You might hit rate limits for public repositories.")
 
@@ -111,6 +120,11 @@ def main():
     started = time.monotonic()
     asyncio.run(tutorial_flow.run_async(shared))
     print(f"Total time: {time.monotonic() - started:.0f}s")
+    try:
+        from utils.call_llm import usage_meter
+        print(usage_meter.format_line())
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()

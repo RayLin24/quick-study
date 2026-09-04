@@ -87,7 +87,20 @@
 
     <section class="panel" aria-labelledby="log-title">
       <h2 id="log-title">运行日志</h2>
-      <p id="job-status" class="status">空闲</p>
+        <p id="job-status" class="status">空闲</p>
+      <div id="step-progress" class="step-progress" hidden>
+        <div class="step-bar" role="progressbar" aria-valuemin="0" aria-valuemax="6" aria-valuenow="0">
+          <span class="step-bar-fill" id="step-bar-fill"></span>
+        </div>
+        <ol class="step-list" id="step-list">
+          <li data-step="fetch">拉取</li>
+          <li data-step="identify">识别</li>
+          <li data-step="relationships">关系</li>
+          <li data-step="order">排序</li>
+          <li data-step="write">写章</li>
+          <li data-step="combine">汇总</li>
+        </ol>
+      </div>
       <pre id="log" class="log" tabindex="0" aria-live="polite"></pre>
       <p id="result" class="result" hidden></p>
     </section>
@@ -98,7 +111,10 @@
     <ul id="tutorial-list" class="cards">
       {% for item in tutorials %}
       <li>
-        <a href="/t/{{ item.name }}">{{ item.name }}</a>
+        <a href="/t/{{ item.name }}">
+          <span class="card-name">{{ item.name }}</span>
+          <span class="card-meta">{% if item.language %}{{ item.language }}{% else %}语言未知{% endif %}{% if item.mtime %} · {{ item.mtime }}{% endif %}</span>
+        </a>
       </li>
       {% else %}
       <li class="empty">还没有教程。生成完成后会出现在这里。</li>

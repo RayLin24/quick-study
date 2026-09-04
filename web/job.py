@@ -23,6 +23,12 @@ COMPLETE_RE = re.compile(r"Tutorial generation complete! Files are in:\s*(.+)\s*
 STATS_RE = re.compile(
     r"QUICK_STUDY_STATS:\s*file_count=(?P<file_count>\d+)\s+map_mode=(?P<map_mode>\S+)"
 )
+STEP_RE = re.compile(r"QUICK_STUDY_STEP:\s*(?P<step>\w+)")
+USAGE_RE = re.compile(
+    r"QUICK_STUDY_USAGE:\s*prompt=(?P<prompt>\d+)\s+completion=(?P<completion>\d+)\s+"
+    r"total=(?P<total>\d+)(?:\s+calls=(?P<calls>\d+))?(?:\s+max_tokens=(?P<max_tokens>\d+))?"
+)
+STEP_ORDER = ("fetch", "identify", "relationships", "order", "write", "combine")
 LOG_RING = int(os.getenv("JOB_LOG_RING", "2000"))
 DEFAULT_JOB_TIMEOUT = float(os.getenv("JOB_TIMEOUT_SECONDS", "3600"))
 
@@ -232,6 +238,8 @@ class Job:
         self.output_name: Optional[str] = None
         self.file_count: Optional[int] = None
         self.map_mode: Optional[bool] = None
+        self.step: Optional[str] = None
+        self.usage: Optional[dict] = None
         self.timeout = timeout
         self.cancelled = False
         self.proc: Optional[subprocess.Popen] = None
@@ -251,6 +259,22 @@ class Job:
                 flag = match.group("map_mode").lower()
                 if flag != "pending":
                     self.map_mode = flag in ("true", "1", "yes")
+            step_match = STEP_RE.search(line)
+            if step_match and step_match.group("step") in STEP_ORDER:
+                self.step = step_match.group("step")
+            usage_match = USAGE_RE.search(line)
+            if usage_match:
+                self.usage = {
+                    "prompt_tokens": int(usage_match.group("prompt")),
+                    "completion_tokens": int(usage_match.group("completion")),
+                    "total_tokens": int(usage_match.group("total")),
+                    "calls": int(usage_match.group("calls") or 0),
+                    "max_tokens": (
+                        int(usage_match.group("max_tokens"))
+                        if usage_match.group("max_tokens")
+                        else None
+                    ),
+                }
 
     def request_cancel(self) -> None:
         self.cancelled = True
@@ -288,6 +312,8 @@ class Job:
                 "output_name": self.output_name,
                 "file_count": self.file_count,
                 "map_mode": self.map_mode,
+                "step": self.step,
+                "usage": self.usage,
                 "source_type": self.payload.get("source_type"),
             }
 
@@ -331,6 +357,8 @@ class JobManager:
                     "log_cursor": 0,
                     "file_count": None,
                     "map_mode": None,
+                    "step": None,
+                    "usage": None,
                 }
             return self._job.snapshot(after=after)
 

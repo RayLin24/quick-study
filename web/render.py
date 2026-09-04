@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import html as html_lib
+import json
 import re
+from datetime import datetime
 from pathlib import Path
 
 import markdown
@@ -14,6 +16,7 @@ HREF_RE = re.compile(r'href="([^"]+)"')
 HEADING_RE = re.compile(r"^#\s+(.+)$", re.M)
 TABLE_RE = re.compile(r"<table>.*?</table>", re.DOTALL)
 H1_RE = re.compile(r"<h1>(.*?)</h1>", re.DOTALL)
+H2_HTML_RE = re.compile(r"<h2(\s[^>]*)?>(.*?)</h2>", re.DOTALL | re.IGNORECASE)
 IMG_RE = re.compile(r"<img\b[^>]*>", re.I)
 INDEX_FILENAMES = ("index.md", "README.md")
 
@@ -33,13 +36,36 @@ def tutorial_index_path(folder: Path) -> Path | None:
     return None
 
 
+def _read_meta(folder: Path) -> dict:
+    path = folder / "meta.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def list_tutorials(output_dir: Path) -> list[dict]:
     if not output_dir.is_dir():
         return []
     items = []
     for child in sorted(output_dir.iterdir(), key=lambda p: p.name.lower()):
-        if child.is_dir() and tutorial_index_path(child) is not None:
-            items.append({"name": child.name})
+        index = tutorial_index_path(child) if child.is_dir() else None
+        if index is None:
+            continue
+        mtime = index.stat().st_mtime
+        meta = _read_meta(child)
+        language = meta.get("language")
+        items.append(
+            {
+                "name": child.name,
+                "language": language,
+                "mtime": datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M"),
+                "mtime_epoch": mtime,
+            }
+        )
     return items
 
 
@@ -70,6 +96,36 @@ def resolve_tutorial_file(output_root: Path, tutorial: str, filename: str) -> Pa
 def first_heading(text: str) -> str | None:
     match = HEADING_RE.search(text)
     return match.group(1).strip() if match else None
+
+
+def slugify_heading(text: str) -> str:
+    plain = re.sub(r"<[^>]+>", "", text)
+    plain = html_lib.unescape(plain).strip()
+    slug = re.sub(r"[^\w\u4e00-\u9fff]+", "-", plain, flags=re.UNICODE).strip("-").lower()
+    return slug or "section"
+
+
+def add_h2_ids(html: str) -> tuple[str, list[dict]]:
+    toc: list[dict] = []
+    seen: dict[str, int] = {}
+
+    def repl(match: re.Match[str]) -> str:
+        attrs = match.group(1) or ""
+        inner = match.group(2)
+        existing = re.search(r'\bid="([^"]+)"', attrs)
+        slug = existing.group(1) if existing else slugify_heading(inner)
+        count = seen.get(slug, 0) + 1
+        seen[slug] = count
+        if count > 1:
+            slug = f"{slug}-{count}"
+        plain = html_lib.unescape(re.sub(r"<[^>]+>", "", inner)).strip()
+        toc.append({"id": slug, "text": plain})
+        if existing:
+            return match.group(0)
+        extra = attrs.rstrip()
+        return f"<h2{extra} id=\"{html_lib.escape(slug, quote=True)}\">{inner}</h2>"
+
+    return H2_HTML_RE.sub(repl, html), toc
 
 
 def chapter_label(filename: str, heading: str | None) -> str:
@@ -170,6 +226,7 @@ def markdown_to_html(text: str, tutorial_name: str, *, cover: bool = False) -> s
     if cover:
         cover_html = f'<figure class="cover">{build_cover_svg(chapter_label("index.md", heading))}</figure>'
         body = H1_RE.sub(lambda match: f"{match.group(0)}\n{cover_html}", body, count=1)
+    body, _toc = add_h2_ids(body)
     return body
 
 

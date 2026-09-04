@@ -2,17 +2,29 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+from utils.ask_tutorial import AskRefused, ask_tutorial
+from utils.errors import format_error
+from web.bind import (
+    BindRefused,
+    assert_safe_bind,
+    detect_uvicorn_host,
+    is_loopback_host,
+    token_from_headers,
+)
 from web.job import JobBusyError, JobManager, subprocess_runner
 from web.render import (
+    add_h2_ids,
     chapter_label,
     first_heading,
     list_tutorials,
@@ -23,6 +35,20 @@ from web.render import (
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
 TEMPLATES = Jinja2Templates(directory=str(WEB_DIR / "templates"))
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>Quick Study 登录</title>
+<link rel="stylesheet" href="/static/app.css"></head>
+<body><main class="layout"><section class="panel">
+<h1>需要访问令牌</h1>
+<p>非本机回环绑定必须设置 <code>QUICK_STUDY_TOKEN</code>。</p>
+<form method="post" action="/login">
+<label class="field"><span>令牌</span>
+<input type="password" name="token" autocomplete="off"></label>
+<button type="submit">进入</button>
+</form>
+<p class="error">{error}</p>
+</section></main></body></html>
+"""
 
 
 class JobIn(BaseModel):
@@ -38,11 +64,17 @@ class JobIn(BaseModel):
     max_size: int | None = Field(default=None, ge=1)
 
 
+class AskIn(BaseModel):
+    question: str = ""
+
+
 def create_app(
     *,
     output_dir: Path | None = None,
     runner=None,
     python_exe: str | None = None,
+    bind_host: str | None = None,
+    ask_fn=None,
 ) -> FastAPI:
     output = Path(output_dir or (ROOT / "output"))
     manager = JobManager(
@@ -52,13 +84,61 @@ def create_app(
         cwd=ROOT,
         runner=runner or subprocess_runner,
     )
-    app = FastAPI(title="Quick Study")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        host = bind_host if bind_host is not None else detect_uvicorn_host()
+        if host is not None:
+            try:
+                assert_safe_bind(host)
+            except BindRefused as exc:
+                raise RuntimeError(str(exc)) from exc
+            app.state.require_auth = not is_loopback_host(host)
+        yield
+
+    app = FastAPI(title="Quick Study", lifespan=lifespan)
     app.state.manager = manager
     app.state.output_dir = output
+    app.state.require_auth = False
+    app.state.ask_fn = ask_fn or ask_tutorial
 
     static_dir = WEB_DIR / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.middleware("http")
+    async def auth_if_needed(request: Request, call_next):
+        if not getattr(app.state, "require_auth", False):
+            return await call_next(request)
+        path = request.url.path
+        if path in {"/login", "/healthz"} or path.startswith("/static/"):
+            return await call_next(request)
+        expected = (os.getenv("QUICK_STUDY_TOKEN") or "").strip()
+        got = token_from_headers(request.headers, request.cookies)
+        if expected and got == expected:
+            return await call_next(request)
+        if path.startswith("/api/"):
+            return JSONResponse({"detail": "需要 QUICK_STUDY_TOKEN"}, status_code=401)
+        return HTMLResponse(LOGIN_HTML.format(error=""), status_code=401)
+
+    @app.get("/healthz")
+    def healthz():
+        return {"ok": True}
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_form():
+        return HTMLResponse(LOGIN_HTML.format(error=""))
+
+    @app.post("/login")
+    async def login_submit(request: Request):
+        form = await request.form()
+        token = str(form.get("token") or "").strip()
+        expected = (os.getenv("QUICK_STUDY_TOKEN") or "").strip()
+        if not expected or token != expected:
+            return HTMLResponse(LOGIN_HTML.format(error="令牌不正确"), status_code=401)
+        response = HTMLResponse('<meta http-equiv="refresh" content="0; url=/">')
+        response.set_cookie("quick_study_token", token, httponly=True, samesite="lax")
+        return response
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):
@@ -71,6 +151,26 @@ def create_app(
     @app.get("/api/tutorials")
     def api_tutorials():
         return {"items": list_tutorials(output)}
+
+    @app.post("/api/tutorials/{tutorial_name}/ask")
+    def api_ask(tutorial_name: str, body: AskIn):
+        try:
+            resolve_tutorial_file(output, tutorial_name, "index.md")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="还没有生成这篇教程，无法提问。请先生成教程。",
+            ) from exc
+        folder = output / tutorial_name
+        try:
+            answer = app.state.ask_fn(folder, body.question)
+        except AskRefused as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=format_error(exc)) from exc
+        return {"answer": answer}
 
     @app.get("/api/jobs/current")
     def api_current_job(after: int | None = None):
@@ -102,14 +202,24 @@ def create_app(
                 logs = snap.get("logs") or []
                 last = snap.get("log_cursor", last)
                 for line in logs:
-                    yield f"data: {json.dumps({'type': 'log', 'line': line}, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({'type': 'log', 'line': line, 'step': snap.get('step')}, ensure_ascii=False)}\n\n"
                 if snap["status"] != "running":
-                    yield f"data: {json.dumps({'type': 'done', 'status': snap['status'], 'output_name': snap.get('output_name'), 'error': snap.get('error'), 'file_count': snap.get('file_count'), 'map_mode': snap.get('map_mode')}, ensure_ascii=False)}\n\n"
+                    payload = {
+                        "type": "done",
+                        "status": snap["status"],
+                        "output_name": snap.get("output_name"),
+                        "error": snap.get("error"),
+                        "file_count": snap.get("file_count"),
+                        "map_mode": snap.get("map_mode"),
+                        "usage": snap.get("usage"),
+                        "step": snap.get("step"),
+                    }
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                     break
                 now = asyncio.get_event_loop().time()
                 if now - last_beat >= 5:
                     last_beat = now
-                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                    yield f"data: {json.dumps({'type': 'heartbeat', 'step': snap.get('step')})}\n\n"
                 await asyncio.sleep(0.35)
 
         return StreamingResponse(generate(), media_type="text/event-stream")
@@ -134,6 +244,12 @@ def create_app(
         title = chapter_label(filename, heading) if filename != "index.md" else (heading or tutorial_name)
         chapters = _chapter_links(output, tutorial_name)
         prev_chapter, next_chapter = _neighbors(chapters, filename)
+        body = markdown_to_html(
+            text,
+            tutorial_name,
+            cover=filename == "index.md",
+        )
+        _body, page_toc = add_h2_ids(body)
         return TEMPLATES.TemplateResponse(
             request,
             "tutorial.html",
@@ -141,11 +257,8 @@ def create_app(
                 "title": title,
                 "tutorial_name": tutorial_name,
                 "filename": filename,
-                "body": markdown_to_html(
-                    text,
-                    tutorial_name,
-                    cover=filename == "index.md",
-                ),
+                "body": body,
+                "page_toc": page_toc,
                 "chapters": chapters,
                 "prev_chapter": prev_chapter,
                 "next_chapter": next_chapter,

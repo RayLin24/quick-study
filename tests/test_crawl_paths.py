@@ -2,6 +2,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from utils.patterns import should_include_file
 from utils.crawl_github_files import (
     DownloadIncompleteError,
     GitHubCrawlError,
@@ -64,6 +65,14 @@ def test_tree_url_never_returns_none(monkeypatch):
     assert result["files"] == {}
     assert result.get("stats", {}).get("error")
     assert "QUICK_STUDY_ERROR:" in result["stats"]["error"]
+
+
+def test_github_include_path_pattern_does_not_empty_run():
+    """src/*.py must match GitHub paths, not only the basename app.py."""
+    files = ["src/app.py", "src/util.py", "lib/other.py", "README.md"]
+    kept = [path for path in files if should_include_file(path, {"src/*.py"}, None)]
+    assert kept == ["src/app.py", "src/util.py"]
+    assert should_include_file("pkg/mod.py", {"*.py"}, None)
 
 
 def test_path_under_base_rejects_sibling_directories():
