@@ -1,5 +1,6 @@
 const form = document.getElementById("job-form");
 const submitBtn = document.getElementById("submit-btn");
+const previewBtn = document.getElementById("preview-btn");
 const cancelBtn = document.getElementById("cancel-btn");
 const errorEl = document.getElementById("form-error");
 const logEl = document.getElementById("log");
@@ -9,6 +10,7 @@ const listEl = document.getElementById("tutorial-list");
 const stepProgress = document.getElementById("step-progress");
 const stepBarFill = document.getElementById("step-bar-fill");
 const stepList = document.getElementById("step-list");
+const previewCard = document.getElementById("preview-card");
 
 const STEP_ORDER = ["fetch", "identify", "relationships", "order", "write", "combine"];
 
@@ -232,11 +234,8 @@ form.addEventListener("change", (event) => {
   }
 });
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  setError("");
-  resultEl.hidden = true;
-  const body = {
+function jobBody() {
+  return {
     source_type: sourceType(),
     repo_url: form.repo_url.value.trim(),
     local_dir: form.local_dir.value.trim(),
@@ -248,6 +247,83 @@ form.addEventListener("submit", async (event) => {
     exclude: form.exclude.value.trim(),
     max_size: form.max_size.value ? Number(form.max_size.value) : null,
   };
+}
+
+function showPreview(data) {
+  if (!previewCard) return;
+  previewCard.hidden = false;
+  previewCard.className = data.ok ? "preview-card" : "preview-card is-warn";
+  const est = data.estimated_calls || {};
+  const sample = (data.files_sample || []).slice(0, 12).map((p) => `· ${p}`).join("<br>");
+  previewCard.innerHTML = "";
+  const title = document.createElement("strong");
+  title.textContent = "预检结果（只爬不写）";
+  previewCard.appendChild(title);
+  const info = document.createElement("p");
+  info.textContent = [
+    `文件 ${data.file_count ?? "?"}`,
+    `估调用 ${est.total ?? "?"}`,
+    `map_mode=${data.map_mode ? "true" : "false"}`,
+    data.truncated_files ? `上下文截断 ${data.truncated_files}` : null,
+  ].filter(Boolean).join(" · ");
+  previewCard.appendChild(info);
+  if (data.warning) {
+    const warn = document.createElement("p");
+    warn.className = "error";
+    warn.textContent = data.warning;
+    previewCard.appendChild(warn);
+  }
+  if (sample) {
+    const list = document.createElement("p");
+    list.className = "preview-files";
+    list.innerHTML = sample;
+    previewCard.appendChild(list);
+  }
+  const hint = document.createElement("p");
+  hint.textContent = data.ok ? "确认无误后点「确认生成」。" : "缩小 include 后再预检。";
+  previewCard.appendChild(hint);
+}
+
+async function runPreview() {
+  setError("");
+  if (previewCard) {
+    previewCard.hidden = false;
+    previewCard.className = "preview-card";
+    previewCard.textContent = "正在预检（只爬不写）…";
+  }
+  const res = await fetch("/api/jobs/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(jobBody()),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || "预检失败");
+  }
+  showPreview(data);
+  return data;
+}
+
+if (previewBtn) {
+  previewBtn.addEventListener("click", async () => {
+    previewBtn.disabled = true;
+    try {
+      await runPreview();
+      setStatus("预检完成");
+    } catch (err) {
+      if (previewCard) previewCard.hidden = true;
+      setError(err.message);
+    } finally {
+      previewBtn.disabled = false;
+    }
+  });
+}
+
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  setError("");
+  resultEl.hidden = true;
+  const body = jobBody();
   setRunning(true);
   setStatus("启动中…");
   logEl.textContent = "";

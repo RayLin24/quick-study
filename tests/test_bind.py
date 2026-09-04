@@ -37,3 +37,6 @@ def test_serve_cli_refuses_public_bind(monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "QUICK_STUDY_TOKEN" in err
     assert "0.0.0.0" in err
+    assert "拒绝启动" in err
+    assert "非回环" in err or "公网" in err
+    assert "启动已中止" in err

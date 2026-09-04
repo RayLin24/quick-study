@@ -35,6 +35,9 @@
       </ol>
     </aside>
     <article class="prose">
+      {% if truncation %}
+      <p class="trunc-banner" data-truncated="{{ truncation.truncated }}" data-total="{{ truncation.total }}">引用文件截断：{{ truncation.truncated }} / {{ truncation.total }}</p>
+      {% endif %}
       {% if page_toc %}
       <nav class="page-toc" aria-label="本页目录">
         <h2>本页目录</h2>
@@ -46,6 +49,9 @@
       </nav>
       {% endif %}
       {{ body | safe }}
+      {% if truncation %}
+      <p class="trunc-banner trunc-banner-foot">引用文件截断：{{ truncation.truncated }} / {{ truncation.total }}</p>
+      {% endif %}
       <nav class="pager" aria-label="相邻章节">
         {% if prev_chapter %}
         <a class="pager-link" href="{{ prev_chapter.href }}">
@@ -76,25 +82,59 @@
     </article>
   </div>
 
+  <script id="chapter-nav" type="application/json">{{ chapters | tojson }}</script>
   <script src="/static/vendor/highlight.min.js"></script>
   <script src="/static/vendor/mermaid.min.js"></script>
   <script>
     hljs.highlightAll();
-    mermaid.initialize({
-      startOnLoad: true,
-      securityLevel: "strict",
-      theme: "base",
-      themeVariables: {
-        fontFamily: "IBM Plex Sans, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif",
-        primaryColor: "#DBEAFE",
-        primaryTextColor: "#1E3A5F",
-        primaryBorderColor: "#2563EB",
-        lineColor: "#0D9488",
-        secondaryColor: "#CCFBF1",
-        tertiaryColor: "#FEF3C7",
-        background: "#FFF8EF",
-      },
-    });
+    function bindMermaidChapterClicks() {
+      const raw = document.getElementById("chapter-nav");
+      if (!raw) return;
+      let chapters = [];
+      try { chapters = JSON.parse(raw.textContent || "[]"); } catch { return; }
+      const byTitle = {};
+      chapters.forEach((ch) => {
+        if (ch.filename && ch.filename !== "index.md" && ch.title) {
+          byTitle[String(ch.title).trim()] = ch.href;
+        }
+      });
+      document.querySelectorAll(".mermaid .node").forEach((node) => {
+        const label = (node.textContent || "").trim();
+        const href = byTitle[label];
+        if (!href) return;
+        node.style.cursor = "pointer";
+        node.setAttribute("tabindex", "0");
+        node.setAttribute("data-chapter-href", href);
+        const go = () => { window.location.href = href; };
+        node.addEventListener("click", (ev) => { ev.preventDefault(); go(); });
+        node.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); }
+        });
+      });
+    }
+    (async () => {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "loose",
+        theme: "base",
+        themeVariables: {
+          fontFamily: "IBM Plex Sans, Segoe UI, PingFang SC, Microsoft YaHei, sans-serif",
+          primaryColor: "#DBEAFE",
+          primaryTextColor: "#1E3A5F",
+          primaryBorderColor: "#2563EB",
+          lineColor: "#0D9488",
+          secondaryColor: "#CCFBF1",
+          tertiaryColor: "#FEF3C7",
+          background: "#FFF8EF",
+        },
+      });
+      if (mermaid.run) {
+        await mermaid.run({ querySelector: ".mermaid" });
+      } else if (mermaid.init) {
+        mermaid.init(undefined, document.querySelectorAll(".mermaid"));
+      }
+      bindMermaidChapterClicks();
+    })();
     const askBtn = document.getElementById("ask-btn");
     const askQ = document.getElementById("ask-question");
     const askErr = document.getElementById("ask-error");

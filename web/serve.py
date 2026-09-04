@@ -19,7 +19,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         assert_safe_bind(args.host)
     except BindRefused as exc:
-        print(exc, file=sys.stderr)
+        print(str(exc), file=sys.stderr)
+        print("\n*** 启动已中止：没有令牌的公网绑定会被拒绝。***\n", file=sys.stderr)
         return 2
     os.environ["QUICK_STUDY_BIND"] = args.host
     uvicorn.run("webapp:app", host=args.host, port=args.port)

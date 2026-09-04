@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from web.render import list_tutorials, markdown_to_html, resolve_tutorial_file
+from web.render import (
+    list_tutorials,
+    markdown_to_html,
+    mermaid_click_bindings,
+    parse_truncation_note,
+    resolve_tutorial_file,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -100,6 +106,24 @@ def test_jbeval_fixture_renders_markdown_and_code():
     assert "<code>" in html
     assert "```python" not in html
     assert "<script" not in html.lower()
+
+
+def test_parse_truncation_note():
+    assert parse_truncation_note("<!-- qs:truncated_files=4 total=9 -->\n# Hi") == {
+        "truncated": 4,
+        "total": 9,
+    }
+    assert parse_truncation_note("# no marker") is None
+
+
+def test_mermaid_click_bindings_skip_index():
+    mapping = mermaid_click_bindings(
+        [
+            {"title": "目录", "href": "/t/Demo", "filename": "index.md"},
+            {"title": "入口", "href": "/t/Demo/01_entry.md", "filename": "01_entry.md"},
+        ]
+    )
+    assert mapping == {"入口": "/t/Demo/01_entry.md"}
 
 
 def test_pocketflow_index_renders_mermaid_and_toc_links():

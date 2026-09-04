@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from utils.errors import format_error
+from utils.partial import expected_output_name, isolate_cancelled_output
 
 GITHUB_REPO_RE = re.compile(
     r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
@@ -20,6 +21,7 @@ GITHUB_REPO_RE = re.compile(
     re.IGNORECASE,
 )
 COMPLETE_RE = re.compile(r"Tutorial generation complete! Files are in:\s*(.+)\s*$")
+OUTPUT_NAME_RE = re.compile(r"QUICK_STUDY_OUTPUT:\s*(?P<name>\S+)")
 STATS_RE = re.compile(
     r"QUICK_STUDY_STATS:\s*file_count=(?P<file_count>\d+)\s+map_mode=(?P<map_mode>\S+)"
 )
@@ -262,6 +264,9 @@ class Job:
             step_match = STEP_RE.search(line)
             if step_match and step_match.group("step") in STEP_ORDER:
                 self.step = step_match.group("step")
+            output_match = OUTPUT_NAME_RE.search(line)
+            if output_match and not self.output_name:
+                self.output_name = output_match.group("name")
             usage_match = USAGE_RE.search(line)
             if usage_match:
                 self.usage = {
@@ -424,6 +429,11 @@ class JobManager:
         except Exception as exc:
             job.finish(success=False, error=str(exc))
         finally:
+            if job.status == "cancelled":
+                name = job.output_name or expected_output_name(job.payload)
+                moved = isolate_cancelled_output(self.output_dir, name, job_id=job.id)
+                if moved:
+                    job.append_log(f"QUICK_STUDY_PARTIAL: {moved.as_posix()}")
             self._persist(job)
 
     def _persist(self, job: Job) -> None:
@@ -483,6 +493,8 @@ def _newest_tutorial_name(output_dir: Path) -> Optional[str]:
     newest = None
     newest_mtime = -1.0
     for child in output_dir.iterdir():
+        if child.name.startswith("."):
+            continue
         index = child / "index.md"
         if child.is_dir() and index.is_file():
             mtime = index.stat().st_mtime

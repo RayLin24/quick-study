@@ -8,6 +8,11 @@ from pathlib import Path
 
 import markdown
 
+from utils.partial import is_library_entry
+
+TRUNCATION_MARKER_RE = re.compile(r"<!--\s*qs:truncated_files=(\d+)\s+total=(\d+)\s*-->")
+MERMAID_CLICK_RE = re.compile(r'^\s*click\s+(\S+)\s+"([^"]+)"\s*$', re.M)
+
 FRONT_MATTER = re.compile(r"^---\r?\n.*?\r?\n---\r?\n", re.DOTALL)
 MERMAID_FENCE = re.compile(r"```mermaid\s*\n(.*?)```", re.DOTALL)
 CODE_FENCE = re.compile(r"```[\w+-]*[^\n]*\n.*?```", re.DOTALL)
@@ -52,6 +57,8 @@ def list_tutorials(output_dir: Path) -> list[dict]:
         return []
     items = []
     for child in sorted(output_dir.iterdir(), key=lambda p: p.name.lower()):
+        if not is_library_entry(child):
+            continue
         index = tutorial_index_path(child) if child.is_dir() else None
         if index is None:
             continue
@@ -91,6 +98,21 @@ def resolve_tutorial_file(output_root: Path, tutorial: str, filename: str) -> Pa
         if readme.is_file():
             return readme
     raise FileNotFoundError(str(target))
+
+
+def parse_truncation_note(text: str) -> dict | None:
+    match = TRUNCATION_MARKER_RE.search(text or "")
+    if not match:
+        return None
+    return {"truncated": int(match.group(1)), "total": int(match.group(2))}
+
+
+def mermaid_click_bindings(chapters: list[dict]) -> dict[str, str]:
+    return {
+        item["title"]: item["href"]
+        for item in chapters
+        if item.get("filename") not in {None, "index.md"} and item.get("title") and item.get("href")
+    }
 
 
 def first_heading(text: str) -> str | None:

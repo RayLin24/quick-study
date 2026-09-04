@@ -27,6 +27,7 @@ def _completion(content: str):
 
 
 def test_empty_sse_raises_and_does_not_cache(tmp_path, monkeypatch):
+    llm.reset_empty_stream_streak()
     monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
     monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
     monkeypatch.setattr(llm, "stream_enabled", True)
@@ -96,6 +97,7 @@ def test_stream_400_falls_back_to_blocking(tmp_path, monkeypatch):
 
 
 def test_empty_stream_falls_back_to_blocking(tmp_path, monkeypatch):
+    llm.reset_empty_stream_streak()
     monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
     monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
     monkeypatch.setattr(llm, "stream_enabled", True)
@@ -293,7 +295,46 @@ def test_cache_key_includes_provider_and_model(tmp_path, monkeypatch):
     assert llm.call_llm("hello", use_cache=True) == "from-b"
 
 
+def test_consecutive_empty_streams_stop_fallback(tmp_path, monkeypatch):
+    llm.reset_empty_stream_streak()
+    monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
+    monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
+    monkeypatch.setattr(llm, "stream_enabled", True)
+    monkeypatch.setattr(llm, "stream_fallback_enabled", True)
+    monkeypatch.setattr(llm, "empty_stream_max", 2)
+    monkeypatch.setenv("LLM_PROVIDER", "DEEPSEEK")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "m")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.example.test")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k")
+    empty = _sse_response(
+        [
+            'data: {"choices":[{"delta":{"reasoning":"thinking"}}]}',
+            "data: [DONE]",
+        ]
+    )
+    blocked = _completion("from blocking")
+    calls = {"stream": 0, "blocking": 0}
+
+    def post(_url, **kwargs):
+        payload = kwargs.get("json") or {}
+        if payload.get("stream"):
+            calls["stream"] += 1
+            return empty
+        calls["blocking"] += 1
+        return blocked
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    assert llm.call_llm("first", use_cache=False) == "from blocking"
+    assert calls["blocking"] == 1
+    with pytest.raises(llm.EmptyLLMResponse, match="consecutive empty"):
+        llm.call_llm("second", use_cache=False)
+    assert calls["blocking"] == 1
+    assert calls["stream"] == 2
+    llm.reset_empty_stream_streak()
+
+
 def test_empty_stream_fallback_is_logged(tmp_path, monkeypatch, capsys):
+    llm.reset_empty_stream_streak()
     monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
     monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
     monkeypatch.setattr(llm, "stream_enabled", True)
@@ -322,6 +363,7 @@ def test_empty_stream_fallback_is_logged(tmp_path, monkeypatch, capsys):
 
 
 def test_empty_stream_does_not_fallback_by_default(tmp_path, monkeypatch):
+    llm.reset_empty_stream_streak()
     monkeypatch.setattr(llm, "cache_dir", str(tmp_path / "cache"))
     monkeypatch.setattr(llm, "legacy_cache_file", str(tmp_path / "missing.json"))
     monkeypatch.setattr(llm, "stream_enabled", True)

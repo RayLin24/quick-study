@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from web.job import JobBusyError, JobManager, _exit_reason, build_command, validate_start_request
+from web.job import JobBusyError, JobCancelled, JobManager, _exit_reason, build_command, validate_start_request
 
 
 def test_validate_repo_requires_github_url():
@@ -195,6 +195,50 @@ def test_log_cursor_does_not_replay_dropped_prefix(tmp_path: Path, monkeypatch):
     assert snap["logs"] == ["line-2", "line-3", "line-4"]
     later = j.snapshot(after=4)
     assert later["logs"] == ["line-4"]
+
+
+def test_cancel_isolates_partial_tutorial(tmp_path: Path):
+    output_dir = tmp_path / "output"
+    dest = output_dir / "Demo"
+    dest.mkdir(parents=True)
+    (dest / "index.md").write_text("# half\n", encoding="utf-8")
+    gate = tmp_path / "gate"
+
+    def runner(cmd, on_line, cwd, job=None):
+        on_line("QUICK_STUDY_OUTPUT: Demo")
+        on_line("working")
+        while not gate.exists():
+            if job is not None and job.cancelled:
+                raise JobCancelled("任务已取消")
+            pass
+        return 0
+
+    manager = JobManager(
+        output_dir=output_dir,
+        python_exe="python",
+        main_py=tmp_path / "main.py",
+        cwd=tmp_path,
+        runner=runner,
+    )
+    manager.start(
+        {
+            "source_type": "repo",
+            "repo_url": "https://github.com/owner/Demo",
+            "name": "Demo",
+        }
+    )
+    manager.cancel()
+    manager.wait(timeout=5)
+    snap = manager.snapshot()
+    assert snap["status"] == "cancelled"
+    assert not dest.exists()
+    partials = list((output_dir / ".partial").glob("Demo-*"))
+    assert partials
+    assert (partials[0] / "index.md").is_file()
+    from web.render import list_tutorials
+
+    assert list_tutorials(output_dir) == []
+    gate.write_text("ok", encoding="utf-8")
 
 
 def test_success_without_complete_line_uses_newest_tutorial(tmp_path: Path):

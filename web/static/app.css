@@ -187,6 +187,62 @@ button:disabled {
   background: #64748b;
 }
 
+#preview-btn {
+  background: #0f766e;
+}
+
+#preview-btn:hover:not(:disabled) {
+  background: #0d9488;
+}
+
+.preview-card {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid #99f6e4;
+  background: #f0fdfa;
+  color: #115e59;
+}
+
+.preview-card.is-warn {
+  border-color: #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.preview-files {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  margin: 8px 0;
+}
+
+.bind-warn {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 2px solid #dc2626;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.bind-warn p {
+  margin: 6px 0 0;
+}
+
+.trunc-banner {
+  margin: 0 0 16px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  color: #9a3412;
+  font-size: 0.9rem;
+}
+
+.trunc-banner-foot {
+  margin: 28px 0 0;
+}
+
 .error {
   color: var(--color-destructive);
   margin: 0 0 12px;
