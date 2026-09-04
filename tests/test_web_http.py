@@ -209,6 +209,26 @@ def test_ask_refuses_when_tutorial_missing(tmp_path: Path):
     assert "还没有生成" in res.json()["detail"]
 
 
+def test_ask_llm_error_is_readable_400(tmp_path: Path):
+    dest = tmp_path / "output" / "Demo"
+    dest.mkdir(parents=True)
+    (dest / "index.md").write_text("# Demo\n", encoding="utf-8")
+
+    def ask_fn(folder, question):
+        raise ValueError("OPENROUTER_API_KEY is not set")
+
+    app = create_app(
+        output_dir=tmp_path / "output",
+        runner=lambda cmd, on_line, cwd: 0,
+        python_exe="python",
+        ask_fn=ask_fn,
+    )
+    client = TestClient(app)
+    res = client.post("/api/tutorials/Demo/ask", json={"question": "是什么"})
+    assert res.status_code == 400
+    assert "OPENROUTER_API_KEY" in res.json()["detail"]
+
+
 def test_ask_answers_from_existing_tutorial(tmp_path: Path):
     dest = tmp_path / "output" / "Demo"
     dest.mkdir(parents=True)

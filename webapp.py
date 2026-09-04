@@ -14,6 +14,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from utils.ask_tutorial import AskRefused, ask_tutorial
+from utils.errors import format_error
 from web.bind import (
     BindRefused,
     assert_safe_bind,
@@ -167,6 +168,8 @@ def create_app(
             answer = app.state.ask_fn(folder, body.question)
         except AskRefused as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=format_error(exc)) from exc
         return {"answer": answer}
 
     @app.get("/api/jobs/current")
