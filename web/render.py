@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import html as html_lib
 import json
 import re
@@ -65,6 +66,7 @@ def list_tutorials(output_dir: Path) -> list[dict]:
         mtime = index.stat().st_mtime
         meta = _read_meta(child)
         language = meta.get("language")
+        chapters = len([p for p in child.glob("*.md") if p.name not in {"index.md", "README.md", "glossary.md", "heatmap.md"}])
         items.append(
             {
                 "name": child.name,
@@ -73,6 +75,9 @@ def list_tutorials(output_dir: Path) -> list[dict]:
                 "mtime_epoch": mtime,
                 "repo_url": meta.get("repo_url"),
                 "usage": meta.get("usage"),
+                "file_count": meta.get("file_count"),
+                "chapter_count": meta.get("chapter_count") or chapters,
+                "strategy": meta.get("strategy"),
             }
         )
     items.sort(key=lambda item: item.get("mtime_epoch") or 0, reverse=True)
@@ -127,6 +132,9 @@ def slugify_heading(text: str) -> str:
     plain = re.sub(r"<[^>]+>", "", text)
     plain = html_lib.unescape(plain).strip()
     slug = re.sub(r"[^\w\u4e00-\u9fff]+", "-", plain, flags=re.UNICODE).strip("-").lower()
+    if slug and re.fullmatch(r"[\u4e00-\u9fff-]+", slug):
+        digest = hashlib.md5(plain.encode("utf-8")).hexdigest()[:4]
+        slug = f"{slug}-{digest}"
     return slug or "section"
 
 

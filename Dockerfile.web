@@ -1,0 +1,14 @@
+FROM python:3.10-slim
+# Web image: never bind 0.0.0.0 without QUICK_STUDY_TOKEN.
+
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+
+# Default loopback. Compose must inject QUICK_STUDY_TOKEN for LAN/public.
+ENV QUICK_STUDY_BIND=127.0.0.1
+EXPOSE 8000
+CMD ["python", "-m", "web.serve", "--host", "127.0.0.1", "--port", "8000"]

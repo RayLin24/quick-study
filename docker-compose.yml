@@ -1,0 +1,19 @@
+# Web stack. Public/LAN bind is refused unless QUICK_STUDY_TOKEN is set
+# (see web/bind.py). Do not publish 0.0.0.0 without a token.
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: quick-study-web
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      QUICK_STUDY_TOKEN: ${QUICK_STUDY_TOKEN:?set QUICK_STUDY_TOKEN before compose up}
+      QUICK_STUDY_READ_TOKEN: ${QUICK_STUDY_READ_TOKEN:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-OPENROUTER}
+    volumes:
+      - ./output:/app/output
+    ports:
+      - "127.0.0.1:8000:8000"
+    command: ["python", "-m", "web.serve", "--host", "127.0.0.1", "--port", "8000"]

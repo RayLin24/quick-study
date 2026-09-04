@@ -198,6 +198,10 @@ function showResult(snap) {
       link.href = `/t/${encodeURIComponent(snap.output_name)}`;
       link.textContent = `打开教程 ${snap.output_name}`;
       resultEl.appendChild(link);
+      const autoOpen = document.getElementById("auto-open");
+      if (autoOpen && autoOpen.checked) {
+        location.href = link.href;
+      }
     }
     setStatus("已完成");
     refreshTutorials();
@@ -206,7 +210,27 @@ function showResult(snap) {
   if (snap.status === "failed" || snap.status === "cancelled") {
     resultEl.hidden = false;
     resultEl.className = "result result-card is-error";
-    resultEl.textContent = snap.error || (snap.status === "cancelled" ? "任务已取消" : "生成失败");
+    resultEl.textContent = "";
+    const errText = snap.error || (snap.status === "cancelled" ? "任务已取消" : "生成失败");
+    const span = document.createElement("span");
+    span.textContent = errText;
+    resultEl.appendChild(span);
+    if (errText.includes("QUICK_STUDY_ERROR")) {
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.id = "copy-error";
+      copy.textContent = "复制错误摘录";
+      copy.addEventListener("click", async () => {
+        const excerpt = (errText.match(/QUICK_STUDY_ERROR:[^\n]+/) || [errText]).slice(0, 1)[0];
+        try {
+          await navigator.clipboard.writeText(excerpt);
+          copy.textContent = "已复制";
+        } catch {
+          copy.textContent = "复制失败";
+        }
+      });
+      resultEl.appendChild(copy);
+    }
     setStatus(snap.status === "cancelled" ? "已取消" : "失败");
     return;
   }
@@ -328,6 +352,9 @@ function jobBody() {
     incremental: !!(form.incremental && form.incremental.checked),
     overview_only: !!(form.overview_only && form.overview_only.checked),
     strategy: form.strategy ? form.strategy.value : "",
+    bilingual: !!(form.bilingual && form.bilingual.checked),
+    pagerank_order: !!(form.pagerank_order && form.pagerank_order.checked),
+    learning_goal: form.learning_goal ? form.learning_goal.value.trim() : "",
     replace: false,
   };
 }
@@ -469,3 +496,70 @@ fetch("/api/jobs/current")
     }
   })
   .catch(() => {});
+
+const smokeBtn = document.getElementById("smoke-btn");
+if (smokeBtn) {
+  smokeBtn.addEventListener("click", () => {
+    const repo = document.querySelector('input[name="source_type"][value="repo"]');
+    if (repo) repo.checked = true;
+    syncSourceFields();
+    form.repo_url.value = "https://github.com/octocat/Hello-World";
+    form.include.value = "*.md";
+    form.max_abstractions.value = "4";
+    setStatus("已预填公开仓，可先预检");
+  });
+}
+
+const patBtn = document.getElementById("pat-check");
+if (patBtn) {
+  patBtn.addEventListener("click", async () => {
+    const token = (document.getElementById("pat-input") || {}).value || "";
+    const res = await fetch("/api/pat/check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    const data = await res.json();
+    const hint = document.getElementById("pat-hint");
+    if (hint) hint.textContent = data.hint || "";
+  });
+}
+
+const zipInput = document.getElementById("zip-upload");
+if (zipInput) {
+  zipInput.addEventListener("change", async () => {
+    if (!zipInput.files || !zipInput.files[0]) return;
+    const fd = new FormData();
+    fd.append("file", zipInput.files[0]);
+    setStatus("上传 ZIP…");
+    const res = await fetch("/api/jobs/upload", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.detail || "上传失败");
+      return;
+    }
+    setRunning(true);
+    connectEvents(data.log_cursor || 0);
+  });
+}
+
+const maxAbs = document.getElementById("max_abstractions");
+if (maxAbs) {
+  const hint = document.createElement("p");
+  hint.id = "cost-hint";
+  hint.className = "ask-hint";
+  maxAbs.parentElement.appendChild(hint);
+  const syncHint = () => {
+    const n = Number(maxAbs.value || 10);
+    hint.textContent = n > 12 ? `max_abstractions=${n} 会增加写章次数与费用。` : "";
+  };
+  maxAbs.addEventListener("input", syncHint);
+  syncHint();
+}
+
+if (form && form.repo_url) {
+  const params = new URLSearchParams(location.search);
+  if (params.get("repo")) {
+    form.repo_url.value = params.get("repo");
+  }
+}

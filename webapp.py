@@ -7,18 +7,39 @@ import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
+from utils.annotations import add_annotation, load_annotations
+from utils.ask_thread import ask_with_thread
 from utils.ask_tutorial import AskRefused, AskResult, ask_tutorial_detailed
+from utils.auth_errors import AUTH_READ_ONLY, AUTH_UNAUTHORIZED, read_only, unauthorized
+from utils.cost_hint import max_abstractions_cost_hint
+from utils.deepwiki import deepwiki_url
+from utils.digest import gitingest_digest
 from utils.errors import format_error
 from utils.export_tutorial import build_llms_txt, zip_tutorial
+from utils.favorites import load_favorites, toggle_favorite
+from utils.glossary import build_glossary
+from utils.health import health_payload
+from utils.heatmap import heatmap_markdown
 from utils.language import DEFAULT_LANGUAGE
+from utils.mcp_tools import call_mcp_tool, mcp_catalog
+from utils.mermaid_export import export_mermaid
+from utils.offline_html import build_offline_html
+from utils.pat_wizard import classify_pat, wizard_steps
 from utils.preview import PreviewError, preview_generation
+from utils.pr_guide import build_pr_guide_prompt
+from utils.push_hook import hook_secret, incremental_job_from_push, verify_github_signature
+from utils.quiz import tutorial_quizzes
+from utils.readonly_token import classify_token, is_write_path
 from utils.strategy import INCLUDE_PRESETS, STRATEGIES
+from utils.versions import diff_versions, list_versions, read_version_file
+from utils.workbench import load_workbench, save_workbench
+from utils.zip_source import extract_source_zip
 from web.bind import (
     BindRefused,
     assert_safe_bind,
@@ -77,6 +98,10 @@ class JobIn(BaseModel):
     polish: bool = False
     replace: bool = False
     strategy: str = ""
+    learning_goal: str = ""
+    bilingual: bool = False
+    pagerank_order: bool = False
+    seed_files: list[str] = Field(default_factory=list)
 
 
 class RenameIn(BaseModel):
@@ -85,6 +110,35 @@ class RenameIn(BaseModel):
 
 class AskIn(BaseModel):
     question: str = ""
+    thread: bool = False
+
+
+class AnnotationIn(BaseModel):
+    filename: str = "index.md"
+    quote: str = ""
+    note: str = ""
+
+
+class WorkbenchIn(BaseModel):
+    repos: list[dict] = Field(default_factory=list)
+
+
+class PatIn(BaseModel):
+    token: str = ""
+
+
+class DigestIn(BaseModel):
+    files: list[dict] = Field(default_factory=list)
+
+
+class CompareIn(BaseModel):
+    left: list[dict] = Field(default_factory=list)
+    right: list[dict] = Field(default_factory=list)
+
+
+class McpCallIn(BaseModel):
+    name: str = ""
+    arguments: dict = Field(default_factory=dict)
 
 
 def create_app(
@@ -130,19 +184,34 @@ def create_app(
         if not getattr(app.state, "require_auth", False):
             return await call_next(request)
         path = request.url.path
-        if path in {"/login", "/healthz"} or path.startswith("/static/"):
+        if path in {"/login", "/healthz", "/api/config"} or path.startswith("/static/"):
             return await call_next(request)
-        expected = (os.getenv("QUICK_STUDY_TOKEN") or "").strip()
-        got = token_from_headers(request.headers, request.cookies)
-        if expected and got == expected:
+        role = classify_token(request.headers, request.cookies)
+        if role == "write":
+            return await call_next(request)
+        if role == "read":
+            if is_write_path(request.method, path):
+                body = read_only()
+                return JSONResponse({"detail": body["detail"], "code": AUTH_READ_ONLY}, status_code=403)
             return await call_next(request)
         if path.startswith("/api/"):
-            return JSONResponse({"detail": "需要 QUICK_STUDY_TOKEN"}, status_code=401)
+            body = unauthorized("需要 QUICK_STUDY_TOKEN")
+            return JSONResponse({"detail": body["detail"], "code": AUTH_UNAUTHORIZED}, status_code=401)
         return HTMLResponse(LOGIN_HTML.format(error=""), status_code=401)
 
     @app.get("/healthz")
     def healthz():
-        return {"ok": True}
+        return health_payload(bind_host=bind_host, output_dir=output)
+
+    @app.get("/api/config")
+    def api_config():
+        return {
+            "llm_timeout_seconds": float(os.getenv("LLM_TIMEOUT_SECONDS") or 300),
+            "mermaid_version": "11.4.1",
+            "smoke_repo": "https://github.com/octocat/Hello-World",
+            "max_abstractions_hint": max_abstractions_cost_hint(16),
+            "pat_steps": wizard_steps(),
+        }
 
     @app.get("/login", response_class=HTMLResponse)
     def login_form():
@@ -189,7 +258,10 @@ def create_app(
             ) from exc
         folder = output / tutorial_name
         try:
-            raw = app.state.ask_fn(folder, body.question)
+            if body.thread:
+                raw = ask_with_thread(folder, body.question)
+            else:
+                raw = app.state.ask_fn(folder, body.question)
         except AskRefused as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
@@ -388,8 +460,145 @@ def create_app(
                 "repo_url": meta.get("repo_url"),
                 "dead_links": meta.get("dead_links") or [],
                 "relationship_warnings": meta.get("relationship_warnings") or {},
+                "deepwiki": deepwiki_url(meta.get("repo_url")),
+                "llm_timeout": float(os.getenv("LLM_TIMEOUT_SECONDS") or 300),
             },
         )
+
+    @app.get("/embed/{tutorial_name}", response_class=HTMLResponse)
+    def embed_tutorial(request: Request, tutorial_name: str):
+        return _tutorial_page(request, tutorial_name, "index.md")
+
+    @app.get("/api/tutorials/{tutorial_name}/offline.html")
+    def api_offline_html(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return HTMLResponse(build_offline_html(folder))
+
+    @app.post("/api/tutorials/{tutorial_name}/mermaid/export")
+    def api_mermaid_export(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return export_mermaid(folder)
+
+    @app.get("/api/tutorials/{tutorial_name}/versions")
+    def api_versions(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return {"items": list_versions(folder)}
+
+    @app.get("/api/tutorials/{tutorial_name}/versions/{older}/diff/{newer}")
+    def api_version_diff(tutorial_name: str, older: str, newer: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return PlainTextResponse(diff_versions(folder, older, newer))
+
+    @app.get("/api/tutorials/{tutorial_name}/glossary")
+    def api_glossary(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return PlainTextResponse(build_glossary(folder))
+
+    @app.get("/api/tutorials/{tutorial_name}/heatmap")
+    def api_heatmap(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        names = [item["title"] for item in _chapter_links(output, tutorial_name)[1:]]
+        edges = []
+        meta_path = folder / "meta.json"
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                edges = (meta.get("relationship_warnings") or {}).get("edges") or []
+            except (OSError, json.JSONDecodeError):
+                edges = []
+        return PlainTextResponse(heatmap_markdown(names, edges if isinstance(edges, list) else []))
+
+    @app.get("/api/tutorials/{tutorial_name}/quiz")
+    def api_quiz(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return {"items": tutorial_quizzes(folder)}
+
+    @app.get("/api/tutorials/{tutorial_name}/annotations")
+    def api_get_annotations(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return {"items": load_annotations(folder)}
+
+    @app.post("/api/tutorials/{tutorial_name}/annotations")
+    def api_add_annotation(tutorial_name: str, body: AnnotationIn):
+        folder = tutorial_folder(output, tutorial_name)
+        return {"items": add_annotation(folder, filename=body.filename, quote=body.quote, note=body.note)}
+
+    @app.post("/api/tutorials/{tutorial_name}/star")
+    def api_star(tutorial_name: str):
+        tutorial_folder(output, tutorial_name)
+        return {"names": toggle_favorite(output, tutorial_name)}
+
+    @app.get("/api/favorites")
+    def api_favorites():
+        return {"names": load_favorites(output)}
+
+    @app.get("/mcp/tools")
+    def api_mcp_tools():
+        return mcp_catalog()
+
+    @app.post("/mcp/call")
+    def api_mcp_call(body: McpCallIn):
+        try:
+            return call_mcp_tool(output, body.name, body.arguments)
+        except (AskRefused, ValueError, FileNotFoundError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/workbench")
+    def api_workbench():
+        return {"repos": load_workbench(output)}
+
+    @app.post("/api/workbench")
+    def api_save_workbench(body: WorkbenchIn):
+        return {"repos": save_workbench(output, body.repos)}
+
+    @app.post("/api/jobs/upload")
+    async def api_upload_zip(file: UploadFile = File(...)):
+        blob = await file.read()
+        dest = output / ".uploads" / (file.filename or "src").replace("..", "_")
+        folder = extract_source_zip(blob, dest)
+        payload = {"source_type": "dir", "local_dir": str(folder)}
+        try:
+            return manager.start(payload)
+        except JobBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/pat/check")
+    def api_pat_check(body: PatIn):
+        return classify_pat(body.token)
+
+    @app.post("/api/digest")
+    def api_digest(body: DigestIn):
+        files = [(str(item.get("path") or "file"), str(item.get("content") or "")) for item in body.files]
+        return {"digest": gitingest_digest(files)}
+
+    @app.post("/api/abstractions/compare")
+    def api_compare(body: CompareIn):
+        from utils.abstraction_compare import compare_abstractions
+
+        return compare_abstractions(body.left, body.right)
+
+    @app.post("/api/guides/pr")
+    def api_pr_guide(body: dict):
+        return {"prompt": build_pr_guide_prompt(str(body.get("diff") or ""), title=str(body.get("title") or "PR"))}
+
+    @app.post("/api/hooks/github")
+    async def api_github_hook(request: Request):
+        payload = await request.body()
+        secret = hook_secret()
+        if secret:
+            sig = request.headers.get("x-hub-signature-256") or ""
+            if not verify_github_signature(secret, payload, sig):
+                raise HTTPException(status_code=401, detail="invalid signature")
+        event = json.loads(payload.decode("utf-8") or "{}")
+        job = incremental_job_from_push(event)
+        try:
+            return manager.start(job)
+        except JobBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return app
 
