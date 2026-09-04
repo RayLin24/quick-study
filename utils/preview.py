@@ -106,6 +106,9 @@ def preview_generation(payload: dict) -> dict:
     from nodes import build_code_context
 
     files_list = collect_files(payload)
+    from utils.crawl_cache import save_crawl_cache
+
+    save_crawl_cache(payload, files_list)
     file_count = len(files_list)
     include_specified = bool(payload.get("include_specified"))
     try:

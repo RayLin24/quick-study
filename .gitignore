@@ -98,6 +98,7 @@ coverage/
 # LLM cache
 llm_cache.json
 llm_cache/
+crawl_cache/
 
 # Output files
 output/

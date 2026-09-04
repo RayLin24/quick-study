@@ -40,10 +40,20 @@
         </label>
 
         <label class="field">
+          <span>策略预设</span>
+          <select id="strategy" name="strategy">
+            <option value="">自定义</option>
+            <option value="beginner">新手</option>
+            <option value="deep">深度</option>
+            <option value="skim">速览（只出总览）</option>
+          </select>
+        </label>
+
+        <label class="field">
           <span>教程语言</span>
           <select id="language" name="language">
-            <option value="Chinese" selected>中文</option>
-            <option value="english">English</option>
+            <option value="Chinese" {% if default_language == "Chinese" %}selected{% endif %}>中文</option>
+            <option value="english" {% if default_language == "english" %}selected{% endif %}>English</option>
           </select>
         </label>
 
@@ -65,6 +75,24 @@
         <label class="field">
           <span>包含文件（include，空格或逗号分隔）</span>
           <input id="include" name="include" type="text" placeholder="*.py *.md" autocomplete="off">
+          <span class="preset-row">
+            <button type="button" class="preset" data-include="src/**">src/**</button>
+            <button type="button" class="preset" data-include="*.py *.pyi">Python</button>
+            <button type="button" class="preset" data-include="*.ts *.tsx *.js *.jsx">Web</button>
+            <button type="button" class="preset" data-include="*.md *.rst">Docs</button>
+          </span>
+        </label>
+        <label class="choice">
+          <input type="checkbox" id="overview_only" name="overview_only">
+          轻量总览（不写长章）
+        </label>
+        <label class="choice">
+          <input type="checkbox" id="resume" name="resume">
+          中断续跑
+        </label>
+        <label class="choice">
+          <input type="checkbox" id="incremental" name="incremental">
+          增量再生成
         </label>
 
         <label class="field">
@@ -82,6 +110,7 @@
         <div class="actions">
           <button type="button" id="preview-btn">预检（只爬不写）</button>
           <button type="submit" id="submit-btn">确认生成</button>
+          <button type="button" id="replace-btn">取消并开始</button>
           <button type="button" id="cancel-btn" hidden>取消任务</button>
         </div>
       </form>

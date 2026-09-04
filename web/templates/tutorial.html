@@ -16,6 +16,10 @@
       <span aria-hidden="true">/</span>
       <a href="/t/{{ tutorial_name }}">{{ tutorial_name }}</a>
     </nav>
+    <nav class="export-nav" aria-label="导出">
+      <a href="/api/tutorials/{{ tutorial_name }}/llms.txt">llms.txt</a>
+      <a href="/api/tutorials/{{ tutorial_name }}/export.zip">zip</a>
+    </nav>
   </header>
 
   <div class="reader">
@@ -78,6 +82,10 @@
         <button type="button" id="ask-btn">提问</button>
         <p id="ask-error" class="error" hidden></p>
         <div id="ask-answer" class="ask-answer" hidden></div>
+        <details id="ask-used" class="ask-used" hidden>
+          <summary>用了哪些章</summary>
+          <ul id="ask-used-list"></ul>
+        </details>
       </section>
     </article>
   </div>
@@ -134,6 +142,24 @@
         mermaid.init(undefined, document.querySelectorAll(".mermaid"));
       }
       bindMermaidChapterClicks();
+      document.querySelectorAll(".mermaid").forEach((node) => {
+        if (!node.querySelector("svg")) {
+          const pre = document.createElement("pre");
+          pre.className = "mermaid-fallback";
+          pre.textContent = node.textContent;
+          node.replaceWith(pre);
+        }
+      });
+      document.querySelectorAll(".copy-path").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          try {
+            await navigator.clipboard.writeText(btn.getAttribute("data-path") || "");
+            btn.textContent = "已复制";
+          } catch {
+            btn.textContent = "复制失败";
+          }
+        });
+      });
     })();
     const askBtn = document.getElementById("ask-btn");
     const askQ = document.getElementById("ask-question");
@@ -156,6 +182,17 @@
           }
           askAns.hidden = false;
           askAns.textContent = data.answer;
+          const used = document.getElementById("ask-used");
+          const usedList = document.getElementById("ask-used-list");
+          if (used && usedList && data.used_chapters && data.used_chapters.length) {
+            used.hidden = false;
+            usedList.innerHTML = "";
+            data.used_chapters.forEach((ch) => {
+              const li = document.createElement("li");
+              li.textContent = `${ch.filename || ""} ${ch.title || ""}`.trim();
+              usedList.appendChild(li);
+            });
+          }
         } catch (err) {
           askErr.hidden = false;
           askErr.textContent = err.message;

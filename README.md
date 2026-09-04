@@ -149,7 +149,7 @@ To run this project in a Docker container, you'll need to pass your API keys as 
 
 1. Build the Docker image
    ```bash
-   docker build -t pocketflow-app .
+   docker build -t quick-study .
    ```
 
 2. Run the container
@@ -164,7 +164,7 @@ To run this project in a Docker container, you'll need to pass your API keys as 
    docker run -it --rm \
      -e OPENROUTER_API_KEY="YOUR_OPENROUTER_API_KEY_HERE" \
      -v "$(pwd)/output_tutorials":/app/output \
-     pocketflow-app --repo https://github.com/username/repo
+     quick-study --repo https://github.com/username/repo
    ```
    
    **Example for analyzing a local directory:**
@@ -174,7 +174,7 @@ To run this project in a Docker container, you'll need to pass your API keys as 
      -e OPENROUTER_API_KEY="YOUR_OPENROUTER_API_KEY_HERE" \
      -v "/path/to/your/local_codebase":/app/code_to_analyze \
      -v "$(pwd)/output_tutorials":/app/output \
-     pocketflow-app --dir /app/code_to_analyze
+     quick-study --dir /app/code_to_analyze
    ```
 </details>
 

@@ -11,6 +11,7 @@ const stepProgress = document.getElementById("step-progress");
 const stepBarFill = document.getElementById("step-bar-fill");
 const stepList = document.getElementById("step-list");
 const previewCard = document.getElementById("preview-card");
+const replaceBtn = document.getElementById("replace-btn");
 
 const STEP_ORDER = ["fetch", "identify", "relationships", "order", "write", "combine"];
 
@@ -72,10 +73,39 @@ async function refreshTutorials() {
     meta.className = "card-meta";
     const bits = [item.language || "语言未知"];
     if (item.mtime) bits.push(item.mtime);
+    if (item.repo_url) bits.push(item.repo_url);
     meta.textContent = bits.join(" · ");
     a.appendChild(name);
     a.appendChild(meta);
+    const actions = document.createElement("div");
+    actions.className = "card-actions";
+    const del = document.createElement("button");
+    del.type = "button";
+    del.textContent = "删除";
+    del.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      if (!confirm(`删除教程 ${item.name}？`)) return;
+      const res = await fetch(`/api/tutorials/${encodeURIComponent(item.name)}`, { method: "DELETE" });
+      if (res.ok) refreshTutorials();
+    });
+    const ren = document.createElement("button");
+    ren.type = "button";
+    ren.textContent = "重命名";
+    ren.addEventListener("click", async (ev) => {
+      ev.preventDefault();
+      const next = prompt("新名称", item.name);
+      if (!next || next === item.name) return;
+      const res = await fetch(`/api/tutorials/${encodeURIComponent(item.name)}/rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: next }),
+      });
+      if (res.ok) refreshTutorials();
+    });
+    actions.appendChild(del);
+    actions.appendChild(ren);
     li.appendChild(a);
+    li.appendChild(actions);
     listEl.appendChild(li);
   }
 }
@@ -106,17 +136,28 @@ function setStep(step) {
 
 function usageText(usage) {
   if (!usage) {
-    return "";
+    return "用量未知";
+  }
+  if (usage.unknown || (usage.total_tokens == null && !usage.calls)) {
+    return "用量未知";
   }
   const parts = [];
-  if (usage.total_tokens != null) {
-    parts.push(`tokens ${usage.prompt_tokens || 0}+${usage.completion_tokens || 0}=${usage.total_tokens}`);
+  if (usage.unknown) {
+    parts.push("用量未知");
+  } else if (usage.total_tokens != null) {
+    parts.push(`tokens ${usage.prompt_tokens ?? "?"}+${usage.completion_tokens ?? "?"}=${usage.total_tokens}`);
   }
   if (usage.max_tokens) {
     parts.push(`max_tokens=${usage.max_tokens}`);
   }
   if (usage.calls) {
     parts.push(`${usage.calls} 次调用`);
+  }
+  if (usage.by_stage && typeof usage.by_stage === "object") {
+    const stages = Object.entries(usage.by_stage)
+      .map(([k, v]) => `${k}:${typeof v === "object" ? v.calls || 0 : v}`)
+      .join(",");
+    if (stages) parts.push(stages);
   }
   return parts.join(" · ");
 }
@@ -139,6 +180,11 @@ function showResult(snap) {
     const usageLine = usageText(snap.usage);
     if (usageLine) {
       meta.push(usageLine);
+    } else {
+      meta.push("用量未知");
+    }
+    if (snap.retry_after) {
+      meta.push(`GitHub 限流，约 ${snap.retry_after}s 后可重试`);
     }
     if (meta.length) {
       resultEl.appendChild(document.createElement("br"));
@@ -234,6 +280,38 @@ form.addEventListener("change", (event) => {
   }
 });
 
+document.querySelectorAll(".preset").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    form.include.value = btn.getAttribute("data-include") || "";
+  });
+});
+
+if (replaceBtn) {
+  replaceBtn.addEventListener("click", async () => {
+    setError("");
+    const body = jobBody();
+    body.replace = true;
+    setRunning(true);
+    setStatus("取消并开始…");
+    try {
+      const res = await fetch("/api/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "无法启动任务");
+      setStatus("运行中");
+      logEl.textContent = "";
+      logCursor = data.log_cursor || 0;
+      connectEvents(logCursor);
+    } catch (err) {
+      setRunning(false);
+      setError(err.message);
+    }
+  });
+}
+
 function jobBody() {
   return {
     source_type: sourceType(),
@@ -246,6 +324,11 @@ function jobBody() {
     include: form.include.value.trim(),
     exclude: form.exclude.value.trim(),
     max_size: form.max_size.value ? Number(form.max_size.value) : null,
+    resume: !!(form.resume && form.resume.checked),
+    incremental: !!(form.incremental && form.incremental.checked),
+    overview_only: !!(form.overview_only && form.overview_only.checked),
+    strategy: form.strategy ? form.strategy.value : "",
+    replace: false,
   };
 }
 

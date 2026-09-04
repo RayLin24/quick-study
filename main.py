@@ -5,7 +5,9 @@ import argparse
 import time
 # Import the function that creates the flow
 from flow import create_tutorial_flow
+from utils.language import DEFAULT_LANGUAGE
 from utils.patterns import DEFAULT_EXCLUDE_PATTERNS, DEFAULT_INCLUDE_PATTERNS
+from utils.strategy import apply_strategy
 
 dotenv.load_dotenv()
 
@@ -29,7 +31,7 @@ def main():
     parser.add_argument("-e", "--exclude", nargs="+", help="Exclude file patterns (e.g. 'tests/*' 'docs/*'). Defaults to test/build directories if not specified.")
     parser.add_argument("-s", "--max-size", type=int, default=100000, help="Maximum file size in bytes (default: 100000, about 100KB).")
     # Add language parameter for multi-language support
-    parser.add_argument("--language", default="english", help="Language for the generated tutorial (default: english)")
+    parser.add_argument("--language", default=DEFAULT_LANGUAGE, help=f"Language for the generated tutorial (default: {DEFAULT_LANGUAGE})")
     # Add use_cache parameter to control LLM caching
     parser.add_argument("--no-cache", action="store_true", help="Disable LLM response caching (default: caching enabled)")
     # Add max_abstraction_num parameter to control the number of abstractions
@@ -39,8 +41,31 @@ def main():
         action="store_true",
         help="只爬不写：打印文件数与估 LLM 调用后退出，不生成教程。",
     )
+    parser.add_argument("--resume", action="store_true", help="从已落盘章节继续，跳过已完成章。")
+    parser.add_argument("--incremental", action="store_true", help="按源文件指纹只重写受影响章。")
+    parser.add_argument("--overview-only", action="store_true", help="轻量总览：只出总览与关系，不写长章。")
+    parser.add_argument("--polish", action="store_true", help="可选：串行补相邻章过渡（默认关）。")
+    parser.add_argument("--strategy", choices=["beginner", "deep", "skim"], help="新手/深度/速览预设。")
 
     args = parser.parse_args()
+    if args.strategy:
+        preset = apply_strategy(
+            {
+                "max_abstractions": None if args.max_abstractions == 10 else args.max_abstractions,
+                "max_size": None if args.max_size == 100000 else args.max_size,
+                "include": " ".join(args.include) if args.include else "",
+                "overview_only": args.overview_only or None,
+            },
+            args.strategy,
+        )
+        if not args.include and preset.get("include"):
+            args.include = preset["include"].split()
+        if args.max_abstractions == 10:
+            args.max_abstractions = preset["max_abstractions"]
+        if args.max_size == 100000:
+            args.max_size = preset["max_size"]
+        if preset.get("overview_only"):
+            args.overview_only = True
 
     # GitHub token: environment only. -t is accepted for old scripts but warned.
     github_token = None
@@ -70,6 +95,11 @@ def main():
 
         # Add language for multi-language support
         "language": args.language,
+        "resume": bool(args.resume or args.incremental),
+        "incremental": bool(args.incremental),
+        "overview_only": bool(args.overview_only),
+        "polish": bool(args.polish),
+        "strategy": args.strategy,
         
         # Add use_cache flag (inverse of no-cache flag)
         "use_cache": not args.no_cache,
