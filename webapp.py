@@ -15,7 +15,10 @@ from pydantic import BaseModel, Field
 
 from utils.ask_tutorial import AskRefused, AskResult, ask_tutorial_detailed
 from utils.errors import format_error
+from utils.export_tutorial import build_llms_txt, zip_tutorial
+from utils.language import DEFAULT_LANGUAGE
 from utils.preview import PreviewError, preview_generation
+from utils.strategy import INCLUDE_PRESETS, STRATEGIES
 from web.bind import (
     BindRefused,
     assert_safe_bind,
@@ -25,7 +28,6 @@ from web.bind import (
 )
 from web.job import JobBusyError, JobManager, subprocess_runner, validate_start_request
 from web.render import (
-    add_h2_ids,
     chapter_label,
     first_heading,
     list_tutorials,
@@ -33,6 +35,7 @@ from web.render import (
     parse_truncation_note,
     resolve_tutorial_file,
 )
+from web.tutorial_ops import clear_tutorial_cache, delete_tutorial, rename_tutorial, tutorial_folder
 
 ROOT = Path(__file__).resolve().parent
 WEB_DIR = ROOT / "web"
@@ -61,13 +64,23 @@ class JobIn(BaseModel):
     source_type: str
     repo_url: str = ""
     local_dir: str = ""
-    language: str = "Chinese"
+    language: str = DEFAULT_LANGUAGE
     name: str = ""
     github_token: str = ""
     max_abstractions: int = Field(default=10, ge=1, le=20)
     include: str = ""
     exclude: str = ""
     max_size: int | None = Field(default=None, ge=1)
+    resume: bool = False
+    incremental: bool = False
+    overview_only: bool = False
+    polish: bool = False
+    replace: bool = False
+    strategy: str = ""
+
+
+class RenameIn(BaseModel):
+    name: str = ""
 
 
 class AskIn(BaseModel):
@@ -151,7 +164,12 @@ def create_app(
         return TEMPLATES.TemplateResponse(
             request,
             "index.html",
-            {"tutorials": list_tutorials(output)},
+            {
+                "tutorials": list_tutorials(output),
+                "default_language": DEFAULT_LANGUAGE,
+                "strategies": STRATEGIES,
+                "include_presets": INCLUDE_PRESETS,
+            },
         )
 
     @app.get("/api/tutorials")
@@ -213,6 +231,73 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.delete("/api/tutorials/{tutorial_name}")
+    def api_delete_tutorial(tutorial_name: str):
+        try:
+            delete_tutorial(output, tutorial_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="找不到这篇教程") from exc
+        return {"ok": True}
+
+    @app.post("/api/tutorials/{tutorial_name}/rename")
+    def api_rename_tutorial(tutorial_name: str, body: RenameIn):
+        try:
+            new_name = rename_tutorial(output, tutorial_name, body.name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="找不到这篇教程") from exc
+        return {"ok": True, "name": new_name}
+
+    @app.get("/api/tutorials/{tutorial_name}/llms.txt")
+    def api_llms_txt(tutorial_name: str):
+        try:
+            folder = tutorial_folder(output, tutorial_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="找不到这篇教程") from exc
+        from fastapi.responses import PlainTextResponse
+
+        return PlainTextResponse(build_llms_txt(folder), media_type="text/plain")
+
+    @app.get("/api/tutorials/{tutorial_name}/export.zip")
+    def api_export_zip(tutorial_name: str):
+        try:
+            folder = tutorial_folder(output, tutorial_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="找不到这篇教程") from exc
+        from fastapi.responses import Response
+
+        data = zip_tutorial(folder)
+        return Response(
+            data,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{tutorial_name}.zip"'},
+        )
+
+    @app.post("/api/tutorials/{tutorial_name}/cache/clear")
+    def api_clear_cache(tutorial_name: str):
+        try:
+            folder = tutorial_folder(output, tutorial_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="找不到这篇教程") from exc
+        cleared = clear_tutorial_cache(folder)
+        meta = {}
+        meta_path = folder / "meta.json"
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                meta = {}
+        return {"ok": True, "cleared": cleared, "include_hash": meta.get("include_hash")}
+
     @app.post("/api/jobs/current/cancel")
     def api_cancel_job():
         try:
@@ -273,12 +358,20 @@ def create_app(
         chapters = _chapter_links(output, tutorial_name)
         prev_chapter, next_chapter = _neighbors(chapters, filename)
         truncation = parse_truncation_note(text)
-        body = markdown_to_html(
+        meta = {}
+        meta_path = (output / tutorial_name / "meta.json")
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                meta = {}
+        body, page_toc = markdown_to_html(
             text,
             tutorial_name,
             cover=filename == "index.md",
+            repo_url=meta.get("repo_url"),
+            return_toc=True,
         )
-        _body, page_toc = add_h2_ids(body)
         return TEMPLATES.TemplateResponse(
             request,
             "tutorial.html",
@@ -292,6 +385,9 @@ def create_app(
                 "prev_chapter": prev_chapter,
                 "next_chapter": next_chapter,
                 "truncation": truncation,
+                "repo_url": meta.get("repo_url"),
+                "dead_links": meta.get("dead_links") or [],
+                "relationship_warnings": meta.get("relationship_warnings") or {},
             },
         )
 

@@ -12,8 +12,12 @@ import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
+from utils.allow_dir import assert_allowed_local_dir
 from utils.errors import format_error
+from utils.language import DEFAULT_LANGUAGE, normalize_language
 from utils.partial import expected_output_name, isolate_cancelled_output
+from utils.redact import looks_like_secret_key, redact_lines, redact_text
+from utils.strategy import apply_strategy
 
 GITHUB_REPO_RE = re.compile(
     r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
@@ -29,7 +33,9 @@ STEP_RE = re.compile(r"QUICK_STUDY_STEP:\s*(?P<step>\w+)")
 USAGE_RE = re.compile(
     r"QUICK_STUDY_USAGE:\s*prompt=(?P<prompt>\d+)\s+completion=(?P<completion>\d+)\s+"
     r"total=(?P<total>\d+)(?:\s+calls=(?P<calls>\d+))?(?:\s+max_tokens=(?P<max_tokens>\d+))?"
+    r"(?P<rest>.*)$"
 )
+RETRY_AFTER_RE = re.compile(r"QUICK_STUDY_RETRY_AFTER:\s*(?P<seconds>\d+)")
 STEP_ORDER = ("fetch", "identify", "relationships", "order", "write", "combine")
 LOG_RING = int(os.getenv("JOB_LOG_RING", "2000"))
 DEFAULT_JOB_TIMEOUT = float(os.getenv("JOB_TIMEOUT_SECONDS", "3600"))
@@ -59,7 +65,8 @@ def _split_patterns(raw) -> Optional[list[str]]:
 
 def validate_start_request(payload: dict) -> dict:
     source_type = str(payload.get("source_type") or "").strip()
-    language = str(payload.get("language") or "Chinese").strip() or "Chinese"
+    language = normalize_language(payload.get("language") or DEFAULT_LANGUAGE)
+    payload = apply_strategy(payload, payload.get("strategy")) if payload.get("strategy") else payload
     name = str(payload.get("name") or "").strip() or None
     token = str(payload.get("github_token") or "").strip() or None
     include = _split_patterns(payload.get("include"))
@@ -100,6 +107,12 @@ def validate_start_request(payload: dict) -> dict:
         "max_size": max_size,
         "include_specified": bool(include),
         "timeout": timeout_seconds,
+        "resume": bool(payload.get("resume") or payload.get("incremental")),
+        "incremental": bool(payload.get("incremental")),
+        "overview_only": bool(payload.get("overview_only")),
+        "polish": bool(payload.get("polish")),
+        "replace": bool(payload.get("replace")),
+        "strategy": str(payload.get("strategy") or "").strip() or None,
     }
 
     if source_type == "repo":
@@ -121,6 +134,7 @@ def validate_start_request(payload: dict) -> dict:
         path = Path(raw).expanduser()
         if not path.is_dir():
             raise ValueError("本地目录不存在，或路径不是目录")
+        assert_allowed_local_dir(path)
         return {
             "source_type": "dir",
             "repo_url": None,
@@ -155,6 +169,16 @@ def build_command(
     if data["max_size"]:
         cmd += ["--max-size", str(data["max_size"])]
     cmd += ["--max-abstractions", str(data["max_abstractions"])]
+    if data.get("resume"):
+        cmd.append("--resume")
+    if data.get("incremental"):
+        cmd.append("--incremental")
+    if data.get("overview_only"):
+        cmd.append("--overview-only")
+    if data.get("polish"):
+        cmd.append("--polish")
+    if data.get("strategy"):
+        cmd += ["--strategy", data["strategy"]]
     return cmd
 
 
@@ -242,6 +266,7 @@ class Job:
         self.map_mode: Optional[bool] = None
         self.step: Optional[str] = None
         self.usage: Optional[dict] = None
+        self.retry_after: Optional[int] = None
         self.timeout = timeout
         self.cancelled = False
         self.proc: Optional[subprocess.Popen] = None
@@ -269,6 +294,17 @@ class Job:
                 self.output_name = output_match.group("name")
             usage_match = USAGE_RE.search(line)
             if usage_match:
+                rest = usage_match.group("rest") or ""
+                stages = {}
+                stage_blob = re.search(r"stages=(\S+)", rest)
+                if stage_blob:
+                    for part in stage_blob.group(1).split(","):
+                        if ":" in part:
+                            name, count = part.split(":", 1)
+                            try:
+                                stages[name] = int(count)
+                            except ValueError:
+                                continue
                 self.usage = {
                     "prompt_tokens": int(usage_match.group("prompt")),
                     "completion_tokens": int(usage_match.group("completion")),
@@ -279,7 +315,15 @@ class Job:
                         if usage_match.group("max_tokens")
                         else None
                     ),
+                    "by_stage": stages,
+                    "unknown": "unknown=1" in rest or (
+                        int(usage_match.group("total")) == 0
+                        and int(usage_match.group("calls") or 0) > 0
+                    ),
                 }
+            retry_match = RETRY_AFTER_RE.search(line)
+            if retry_match:
+                self.retry_after = int(retry_match.group("seconds"))
 
     def request_cancel(self) -> None:
         self.cancelled = True
@@ -319,12 +363,19 @@ class Job:
                 "map_mode": self.map_mode,
                 "step": self.step,
                 "usage": self.usage,
+                "retry_after": self.retry_after,
                 "source_type": self.payload.get("source_type"),
             }
 
     def persist_payload(self) -> dict:
-        data = {k: v for k, v in self.payload.items() if k != "github_token"}
+        data = {
+            k: v
+            for k, v in self.payload.items()
+            if k != "github_token" and not looks_like_secret_key(str(k))
+        }
         snap = self.snapshot()
+        snap["logs"] = redact_lines(snap.get("logs") or [])
+        snap["error"] = redact_text(snap.get("error") or "") or None
         snap["payload"] = data
         return snap
 
@@ -364,11 +415,19 @@ class JobManager:
                     "map_mode": None,
                     "step": None,
                     "usage": None,
+                    "retry_after": None,
                 }
             return self._job.snapshot(after=after)
 
     def start(self, payload: dict) -> dict:
         data = validate_start_request(payload)
+        if data.get("replace"):
+            with self._lock:
+                current = self._job
+                running = current is not None and current.status == "running"
+            if running:
+                current.request_cancel()
+                self.wait(timeout=30)
         cmd = build_command(
             data,
             python_exe=self.python_exe,

@@ -327,6 +327,42 @@ button:disabled {
   font-size: 0.8rem;
 }
 
+.card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.card-actions button,
+.preset {
+  min-height: 32px;
+  padding: 4px 10px;
+  background: #475569;
+  font-size: 0.8rem;
+}
+
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.export-nav {
+  margin-left: auto;
+  display: flex;
+  gap: 12px;
+}
+
+.ask-used {
+  margin-top: 8px;
+}
+
+.mermaid-fallback {
+  white-space: pre-wrap;
+  padding: 12px;
+  background: #fff8ef;
+}
+
 .step-progress {
   margin: 0 0 12px;
 }

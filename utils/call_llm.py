@@ -57,6 +57,7 @@ _raw_max_tokens = os.getenv("LLM_MAX_TOKENS", "").strip()
 max_tokens = int(_raw_max_tokens) if _raw_max_tokens.isdigit() and int(_raw_max_tokens) > 0 else None
 
 _print_lock = threading.Lock()
+_current_stage = threading.local()
 _legacy_cache = None
 _legacy_loaded = False
 STREAM_FALLBACK_STATUSES = {400, 404, 415, 422}
@@ -101,34 +102,57 @@ class UsageMeter:
         self.completion_tokens = 0
         self.total_tokens = 0
         self.calls = 0
+        self.by_stage: dict[str, dict] = {}
 
-    def add(self, usage) -> None:
+    def add(self, usage, stage: str | None = None) -> None:
         if not isinstance(usage, dict):
             return
         prompt = int(usage.get("prompt_tokens") or 0)
         completion = int(usage.get("completion_tokens") or 0)
         total = int(usage.get("total_tokens") or (prompt + completion))
-        if prompt == 0 and completion == 0 and total == 0:
+        known = not (prompt == 0 and completion == 0 and total == 0)
+        if not known and not usage:
             return
+        stage = stage or getattr(_current_stage, "value", None)
         with self._lock:
-            self.prompt_tokens += prompt
-            self.completion_tokens += completion
-            self.total_tokens += total
+            if known:
+                self.prompt_tokens += prompt
+                self.completion_tokens += completion
+                self.total_tokens += total
             self.calls += 1
+            if stage:
+                bucket = self.by_stage.setdefault(
+                    stage, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "calls": 0}
+                )
+                if known:
+                    bucket["prompt_tokens"] += prompt
+                    bucket["completion_tokens"] += completion
+                    bucket["total_tokens"] += total
+                bucket["calls"] += 1
 
     def snapshot(self) -> dict:
         with self._lock:
+            unknown = self.calls > 0 and self.total_tokens == 0 and self.prompt_tokens == 0
             return {
                 "prompt_tokens": self.prompt_tokens,
                 "completion_tokens": self.completion_tokens,
                 "total_tokens": self.total_tokens,
                 "calls": self.calls,
                 "max_tokens": max_tokens,
+                "by_stage": {k: dict(v) for k, v in self.by_stage.items()},
+                "unknown": unknown,
             }
 
     def format_line(self) -> str:
         snap = self.snapshot()
         extra = f" max_tokens={snap['max_tokens']}" if snap["max_tokens"] else ""
+        stages = snap.get("by_stage") or {}
+        if stages:
+            extra += " stages=" + ",".join(
+                f"{name}:{data.get('calls', 0)}" for name, data in stages.items()
+            )
+        if snap.get("unknown"):
+            extra += " unknown=1"
         return (
             f"QUICK_STUDY_USAGE: prompt={snap['prompt_tokens']} "
             f"completion={snap['completion_tokens']} total={snap['total_tokens']} "
@@ -521,8 +545,10 @@ def call_llm(
     use_cache: bool = True,
     progress_label: str = None,
     temperature: float = 0.7,
+    stage: str | None = None,
 ) -> str:
     logger.info(_prompt_log_text(prompt))
+    _current_stage.value = stage
 
     # Check cache if enabled
     if use_cache:
@@ -552,6 +578,7 @@ def call_llm(
         save_cache(prompt, response_text)
 
     _emit(usage_meter.format_line())
+    _current_stage.value = None
     return response_text
 
 

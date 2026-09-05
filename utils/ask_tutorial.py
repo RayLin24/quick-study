@@ -228,7 +228,10 @@ def ask_tutorial_detailed(
     selected, routed = select_ask_chapters(chapters, q, top_k=top_k, max_chars=max_chars)
     prompt = build_ask_prompt(bundle, q, selected)
     caller = call or call_llm
-    answer = caller(prompt, use_cache=False, temperature=0.2)
+    try:
+        answer = caller(prompt, use_cache=False, temperature=0.2, stage="ask")
+    except TypeError:
+        answer = caller(prompt, use_cache=False, temperature=0.2)
     return AskResult(
         answer=answer,
         used_chapters=[{"filename": ch.filename, "title": ch.title} for ch in selected],

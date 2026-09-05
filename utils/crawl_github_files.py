@@ -183,7 +183,9 @@ def request_get(
             sleep(min(8.0, 0.5 * (2 ** attempt)))
             continue
         if is_rate_limited(response) and attempt < attempts - 1:
-            sleep(min(8.0, rate_limit_wait(response)))
+            wait = rate_limit_wait(response)
+            print(f"QUICK_STUDY_RETRY_AFTER: {int(wait)}")
+            sleep(min(8.0, wait))
             continue
         return response
     if last_error:
@@ -517,6 +519,7 @@ def crawl_github_files(
         if response.status_code == 403 and 'rate limit exceeded' in response.text.lower():
             reset_time = int(response.headers.get('X-RateLimit-Reset', 0))
             wait_time = max(reset_time - time.time(), 0) + 1
+            print(f"QUICK_STUDY_RETRY_AFTER: {int(wait_time)}")
             print(f"Rate limit exceeded. Waiting for {wait_time:.0f} seconds...")
             time.sleep(wait_time)
             return fetch_contents(path)

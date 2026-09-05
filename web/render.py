@@ -71,8 +71,11 @@ def list_tutorials(output_dir: Path) -> list[dict]:
                 "language": language,
                 "mtime": datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M"),
                 "mtime_epoch": mtime,
+                "repo_url": meta.get("repo_url"),
+                "usage": meta.get("usage"),
             }
         )
+    items.sort(key=lambda item: item.get("mtime_epoch") or 0, reverse=True)
     return items
 
 
@@ -209,7 +212,14 @@ def _escape_raw_html_outside_code(text: str) -> str:
     return prepared
 
 
-def markdown_to_html(text: str, tutorial_name: str, *, cover: bool = False) -> str:
+def markdown_to_html(
+    text: str,
+    tutorial_name: str,
+    *,
+    cover: bool = False,
+    repo_url: str | None = None,
+    return_toc: bool = False,
+):
     if text.startswith("---"):
         text = FRONT_MATTER.sub("", text, count=1)
     placeholders: list[str] = []
@@ -248,7 +258,12 @@ def markdown_to_html(text: str, tutorial_name: str, *, cover: bool = False) -> s
     if cover:
         cover_html = f'<figure class="cover">{build_cover_svg(chapter_label("index.md", heading))}</figure>'
         body = H1_RE.sub(lambda match: f"{match.group(0)}\n{cover_html}", body, count=1)
-    body, _toc = add_h2_ids(body)
+    body, toc = add_h2_ids(body)
+    from utils.source_format import linkify_source_html
+
+    body = linkify_source_html(body, repo_url=repo_url)
+    if return_toc:
+        return body, toc
     return body
 
 

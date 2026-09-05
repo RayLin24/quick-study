@@ -142,7 +142,7 @@ def clip_snippets_with_stats(content_map, *, max_total_chars=None, max_file_char
         cut = len(raw) > max_file_chars
         body = raw[:max_file_chars]
         label = idx_path.split("# ", 1)[1] if "# " in idx_path else idx_path
-        piece = f"--- File: {label} ---\n# source: {label}\n{body}\n\n"
+        piece = f"--- File: {label} ---\n*source: {label}*\n{body}\n\n"
         if used + len(piece) > max_total_chars:
             truncated_files += len(items) - included
             break
@@ -252,45 +252,54 @@ class FetchRepo(Node):
 
     def exec(self, prep_res):
         emit_step("fetch")
-        if prep_res["repo_url"]:
-            print(f"Crawling repository: {prep_res['repo_url']}...")
-            try:
-                result = crawl_github_files(
-                    repo_url=prep_res["repo_url"],
-                    token=prep_res["token"],
+        from utils.crawl_cache import load_crawl_cache, save_crawl_cache
+
+        cached = load_crawl_cache(prep_res)
+        if cached:
+            print(f"Reusing dry-run crawl cache ({len(cached)} files).")
+            files_list = cached
+        else:
+            if prep_res["repo_url"]:
+                print(f"Crawling repository: {prep_res['repo_url']}...")
+                try:
+                    result = crawl_github_files(
+                        repo_url=prep_res["repo_url"],
+                        token=prep_res["token"],
+                        include_patterns=prep_res["include_patterns"],
+                        exclude_patterns=prep_res["exclude_patterns"],
+                        max_file_size=prep_res["max_file_size"],
+                        use_relative_paths=prep_res["use_relative_paths"],
+                    )
+                except GitHubCrawlError as exc:
+                    raise ValueError(format_error(exc)) from exc
+            else:
+                print(f"Crawling directory: {prep_res['local_dir']}...")
+                result = crawl_local_files(
+                    directory=prep_res["local_dir"],
                     include_patterns=prep_res["include_patterns"],
                     exclude_patterns=prep_res["exclude_patterns"],
                     max_file_size=prep_res["max_file_size"],
-                    use_relative_paths=prep_res["use_relative_paths"],
+                    use_relative_paths=prep_res["use_relative_paths"]
                 )
-            except GitHubCrawlError as exc:
-                raise ValueError(format_error(exc)) from exc
-        else:
-            print(f"Crawling directory: {prep_res['local_dir']}...")
-
-            result = crawl_local_files(
-                directory=prep_res["local_dir"],
-                include_patterns=prep_res["include_patterns"],
-                exclude_patterns=prep_res["exclude_patterns"],
-                max_file_size=prep_res["max_file_size"],
-                use_relative_paths=prep_res["use_relative_paths"]
-            )
-
-        if not isinstance(result, dict):
-            raise ValueError(format_error("crawl returned no result for this URL"))
-        if result.get("stats", {}).get("error"):
-            raise ValueError(format_error(result["stats"]["error"]))
-
-        files_list = sorted(result.get("files", {}).items(), key=lambda item: item[0])
+            if not isinstance(result, dict):
+                raise ValueError(format_error("crawl returned no result for this URL"))
+            if result.get("stats", {}).get("error"):
+                raise ValueError(format_error(result["stats"]["error"]))
+            files_list = sorted(result.get("files", {}).items(), key=lambda item: item[0])
+            save_crawl_cache(prep_res, files_list)
         if len(files_list) == 0:
             raise ValueError(format_error("Failed to fetch files"))
         threshold = CRAWL_FILE_THRESHOLD
         if len(files_list) > threshold and not prep_res.get("include_specified"):
+            from utils.include_suggest import suggest_include_patterns
+
+            suggestion = suggest_include_patterns(files_list)
             raise ValueError(
                 format_error(
                     f"crawled {len(files_list)} files (threshold {threshold}). "
                     "Set include / exclude / max-size to shrink the crawl, "
-                    "or pass include patterns to confirm this scope."
+                    "or pass include patterns to confirm this scope. "
+                    f"Suggested include: {suggestion}"
                 )
             )
         print(f"Fetched {len(files_list)} files.")
@@ -404,6 +413,7 @@ Format the output as a YAML list of dictionaries:
             prompt,
             use_cache=(use_cache and self.cur_retry == 0),
             temperature=YAML_TEMPERATURE,
+            stage="identify",
         )
 
         abstractions = parse_llm_yaml(response)
@@ -575,6 +585,7 @@ Now, provide the YAML output:
             prompt,
             use_cache=(use_cache and self.cur_retry == 0),
             temperature=YAML_TEMPERATURE,
+            stage="relationships",
         )
 
         relationships_data = parse_llm_yaml(response)
@@ -633,7 +644,16 @@ Now, provide the YAML output:
     def post(self, shared, prep_res, exec_res):
         # Structure is now {"summary": str, "details": [{"from": int, "to": int, "label": str}]}
         # Summary and label might be translated
+        from utils.relationships_check import relationship_coverage
+
         shared["relationships"] = exec_res
+        coverage = relationship_coverage(len(shared.get("abstractions") or []), exec_res.get("details") or [])
+        shared["relationship_warnings"] = coverage
+        if coverage["orphans"]:
+            print(
+                f"QUICK_STUDY_WARN: relationship orphans={coverage['orphans']} "
+                f"edges={coverage['edge_count']}"
+            )
 
 
 class OrderChapters(Node):
@@ -720,6 +740,7 @@ Now, provide the YAML output:
             prompt,
             use_cache=(use_cache and self.cur_retry == 0),
             temperature=YAML_TEMPERATURE,
+            stage="order",
         )
 
         ordered_indices_raw = parse_llm_yaml(response)
@@ -777,6 +798,14 @@ class WriteChapters(AsyncParallelBatchNode):
         language = shared.get("language", "english")
         use_cache = shared.get("use_cache", True)  # Get use_cache flag, default to True
         relationships = (shared.get("relationships") or {}).get("details") or []
+        overview_only = bool(shared.get("overview_only"))
+        resume = bool(shared.get("resume") or shared.get("incremental"))
+        map_mode = bool(shared.get("map_mode"))
+        output_folder = None
+        if shared.get("output_dir") and shared.get("project_name"):
+            from utils.resume import tutorial_dir
+
+            output_folder = tutorial_dir(shared["output_dir"], shared["project_name"])
 
         emit_step("write")
         self._semaphore = asyncio.Semaphore(CHAPTER_CONCURRENCY)
@@ -875,8 +904,19 @@ class WriteChapters(AsyncParallelBatchNode):
                         "language": language,  # Add language for multi-language support
                         "use_cache": use_cache, # Pass use_cache flag
                         "relationship_edges": relationship_edges_for(abstraction_index),
+                        "filename": chapter_filenames[abstraction_index]["filename"],
+                        "overview_only": overview_only,
+                        "map_mode": map_mode,
+                        "output_folder": str(output_folder) if output_folder else None,
+                        "saved_chapter": None,
                     }
                 )
+                if resume and output_folder:
+                    from utils.resume import load_saved_chapter
+
+                    items_to_process[-1]["saved_chapter"] = load_saved_chapter(
+                        output_folder, chapter_filenames[abstraction_index]["filename"]
+                    )
             else:
                 print(
                     f"Warning: Invalid abstraction index {abstraction_index} in chapter_order. Skipping."
@@ -901,7 +941,35 @@ class WriteChapters(AsyncParallelBatchNode):
         language = item.get("language", "english")
         use_cache = item.get("use_cache", True) # Read use_cache from item
 
-        file_context_str, clip_stats = clip_snippets_with_stats(item["related_files_content_map"])
+        if item.get("saved_chapter"):
+            print(f"Resuming chapter {chapter_num} from disk.")
+            return item["saved_chapter"]
+        if item.get("overview_only"):
+            stub = (
+                f"# Chapter {chapter_num}: {abstraction_name}\n\n"
+                f"{abstraction_description}\n\n"
+                f"{item.get('relationship_edges') or ''}\n\n"
+                "（轻量总览模式：本章未展开长文。）\n"
+            )
+            text = finalize_chapter(stub + ("概述。" * 30), chapter_num, abstraction_name)
+            from utils.relationships_check import append_required_links
+
+            text = append_required_links(text, item.get("relationship_edges") or "")
+            if item.get("output_folder") and item.get("filename"):
+                from utils.resume import save_chapter
+
+                save_chapter(item["output_folder"], item["filename"], text)
+            return inject_truncation_note(text, {"truncated_files": 0, "file_count": 0})
+        if item.get("map_mode"):
+            from utils.map_slices import clip_map_mode_snippets
+
+            file_context_str = clip_map_mode_snippets(item["related_files_content_map"])
+            clip_stats = {
+                "truncated_files": 0,
+                "file_count": len(item.get("related_files_content_map") or {}),
+            }
+        else:
+            file_context_str, clip_stats = clip_snippets_with_stats(item["related_files_content_map"])
 
         # Add language instruction and context notes only if not English
         language_instruction = ""
@@ -987,20 +1055,43 @@ Now, directly provide a super beginner-friendly Markdown output (DON'T need ```m
 
         async with self._semaphore:
             print(f"Writing chapter {chapter_num} for: {abstraction_name} using LLM...")
-            chapter_content = await asyncio.to_thread(
-                call_llm,
-                prompt,
-                use_cache_now,
-                f"ch {chapter_num}/{len(item['chapter_filenames'])}",
-            )
+            def _write_call():
+                try:
+                    return call_llm(
+                        prompt,
+                        use_cache_now,
+                        f"ch {chapter_num}/{len(item['chapter_filenames'])}",
+                        stage="write",
+                    )
+                except TypeError:
+                    return call_llm(
+                        prompt,
+                        use_cache_now,
+                        f"ch {chapter_num}/{len(item['chapter_filenames'])}",
+                    )
+
+            chapter_content = await asyncio.to_thread(_write_call)
 
         text = finalize_chapter(chapter_content, chapter_num, abstraction_name)
-        return inject_truncation_note(text, clip_stats)
+        from utils.relationships_check import append_required_links
+
+        text = append_required_links(text, item.get("relationship_edges") or "")
+        text = inject_truncation_note(text, clip_stats)
+        if item.get("output_folder") and item.get("filename"):
+            from utils.resume import save_chapter
+
+            save_chapter(item["output_folder"], item["filename"], text)
+        return text
 
     async def post_async(self, shared, prep_res, exec_res_list):
         # asyncio.gather preserves input order, so exec_res_list still follows chapter_order
-        shared["chapters"] = exec_res_list
-        print(f"Finished writing {len(exec_res_list)} chapters.")
+        chapters = list(exec_res_list)
+        if shared.get("polish"):
+            from utils.polish import polish_transitions
+
+            chapters = polish_transitions(chapters, shared.get("chapter_order") or [])
+        shared["chapters"] = chapters
+        print(f"Finished writing {len(chapters)} chapters.")
 
 
 class CombineTutorial(Node):
@@ -1063,7 +1154,7 @@ class CombineTutorial(Node):
             )
 
         # Keep fixed strings in English
-        index_content += f"## Chapters\n\n"
+        index_content += f"## 推荐阅读路径\n\n"
 
         chapter_files = []
         click_lines = []
@@ -1074,13 +1165,17 @@ class CombineTutorial(Node):
                 abstraction_name = abstractions[abstraction_index][
                     "name"
                 ]  # Potentially translated name
+                rationale = (abstractions[abstraction_index].get("description") or "").strip().split("\n")[0][:160]
                 # Sanitize potentially translated name for filename
                 safe_name = "".join(
                     c if c.isalnum() else "_" for c in abstraction_name
                 ).lower()
                 filename = f"{i+1:02d}_{safe_name}.md"
                 click_lines.append(f'    click A{abstraction_index} "{filename}"')
-                index_content += f"{i+1}. [{abstraction_name}]({filename})\n"  # Use potentially translated name in link text
+                index_content += f"{i+1}. [{abstraction_name}]({filename})"
+                if rationale:
+                    index_content += f" — {rationale}"
+                index_content += "\n"
 
                 # Add attribution to chapter content (using English fixed string)
                 chapter_content = chapters_content[i]  # Potentially translated content
@@ -1099,7 +1194,7 @@ class CombineTutorial(Node):
         mermaid_diagram = "\n".join(mermaid_lines + click_lines)
         # Insert the diagram above the chapter list.
         diagram_block = "```mermaid\n" + mermaid_diagram + "\n```\n\n"
-        marker = "## Chapters\n\n"
+        marker = "## 推荐阅读路径\n\n"
         if marker in index_content:
             index_content = index_content.replace(marker, diagram_block + marker, 1)
         else:
@@ -1115,6 +1210,11 @@ class CombineTutorial(Node):
             "language": shared.get("language", "english"),
             "project_name": project_name,
             "file_count": file_count,
+            "repo_url": repo_url,
+            "include_patterns": sorted(shared.get("include_patterns") or []),
+            "exclude_patterns": sorted(shared.get("exclude_patterns") or []),
+            "max_file_size": shared.get("max_file_size"),
+            "relationship_warnings": shared.get("relationship_warnings"),
         }
 
     def exec(self, prep_res):
@@ -1140,10 +1240,28 @@ class CombineTutorial(Node):
                 f.write(chapter_info["content"])
             print(f"  - Wrote {chapter_filepath}")
 
+        import hashlib
+        from utils.dead_links import find_dead_markdown_links
+
+        include_material = json.dumps(
+            {
+                "include": prep_res.get("include_patterns") or [],
+                "exclude": prep_res.get("exclude_patterns") or [],
+                "max_size": prep_res.get("max_file_size"),
+            },
+            sort_keys=True,
+        )
+        dead = find_dead_markdown_links(output_path)
+        if dead:
+            print(f"QUICK_STUDY_WARN: dead_links={len(dead)}")
         meta = {
             "name": prep_res.get("project_name"),
             "language": prep_res.get("language") or "english",
             "file_count": prep_res.get("file_count"),
+            "repo_url": prep_res.get("repo_url"),
+            "include_hash": hashlib.sha256(include_material.encode("utf-8")).hexdigest()[:12],
+            "dead_links": dead,
+            "relationship_warnings": prep_res.get("relationship_warnings"),
         }
         meta_path = os.path.join(output_path, "meta.json")
         with open(meta_path, "w", encoding="utf-8") as f:

@@ -6,7 +6,7 @@ from nodes import FetchRepo, clip_snippets, clip_snippets_with_stats
 def test_clip_snippets_includes_source_path():
     text = clip_snippets({"pkg/mod.py": "print(1)\n"}, max_total_chars=2000, max_file_chars=500)
     assert "--- File: pkg/mod.py ---" in text
-    assert "# source: pkg/mod.py" in text
+    assert "*source: pkg/mod.py*" in text
     assert "print(1)" in text
 
 
