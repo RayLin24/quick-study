@@ -13,6 +13,17 @@ from pathlib import Path
 
 from utils.repo_map import build_repo_map, expand_abstraction_files
 
+
+def _upstream_commit(local_dir):
+    if not local_dir:
+        return None
+    try:
+        from utils.stale import git_head
+
+        return git_head(local_dir)
+    except Exception:
+        return None
+
 # Chapters are written concurrently; keep enough headroom that the provider does not
 # start rate-limiting, which would cost more than the parallelism saves.
 CHAPTER_CONCURRENCY = int(os.getenv("LLM_MAX_CONCURRENCY", "5"))
@@ -854,7 +865,10 @@ class WriteChapters(AsyncParallelBatchNode):
             output_folder = tutorial_dir(shared["output_dir"], shared["project_name"])
 
         emit_step("write")
-        self._semaphore = asyncio.Semaphore(CHAPTER_CONCURRENCY)
+        from utils.mem_guard import apply_concurrency
+
+        conc = apply_concurrency(len(files_data or []))
+        self._semaphore = asyncio.Semaphore(conc)
         self._attempts = {}
 
         # Create a complete list of all chapters
@@ -1294,6 +1308,7 @@ class CombineTutorial(Node):
             "relationships": shared.get("relationships") or {},
             "strategy": shared.get("strategy"),
             "local_dir": shared.get("local_dir"),
+            "upstream_commit": _upstream_commit(shared.get("local_dir")),
         }
 
     def exec(self, prep_res):
@@ -1344,6 +1359,7 @@ class CombineTutorial(Node):
             "chapter_count": len(chapter_files),
             "strategy": prep_res.get("strategy"),
             "local_dir": prep_res.get("local_dir"),
+            "upstream_commit": prep_res.get("upstream_commit"),
         }
         meta_path = os.path.join(output_path, "meta.json")
         with open(meta_path, "w", encoding="utf-8") as f:

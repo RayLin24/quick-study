@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "Quick Study GitHub Fill",
+  "version": "0.1.0",
+  "description": "Fill the local Quick Study form from the current GitHub repo page.",
+  "action": { "default_title": "Quick Study" },
+  "permissions": [],
+  "host_permissions": ["http://127.0.0.1:8000/*"],
+  "background": { "service_worker": "background.js" }
+}

@@ -273,7 +273,11 @@ def markdown_to_html(
     body = IMG_RE.sub(_promote_image, body)
     body = re.sub(r"(</h1>\s*)<p>", r'\1<p class="lead">', body, count=1)
     if cover:
-        cover_html = f'<figure class="cover">{build_cover_svg(chapter_label("index.md", heading))}</figure>'
+        from utils.og_cover import og_cover_html
+
+        cover_html = og_cover_html(repo_url, heading) or (
+            f'<figure class="cover">{build_cover_svg(chapter_label("index.md", heading))}</figure>'
+        )
         body = H1_RE.sub(lambda match: f"{match.group(0)}\n{cover_html}", body, count=1)
     body, toc = add_h2_ids(body)
     from utils.source_format import linkify_source_html

@@ -630,6 +630,36 @@ if (searchForm && searchQ && searchHits) {
     }
   });
 }
+const presetExport = document.getElementById("preset-export");
+if (presetExport) {
+  presetExport.addEventListener("click", async () => {
+    const body = jobBody();
+    const res = await fetch("/api/presets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "last", payload: body }),
+    });
+    const data = await res.json();
+    const blob = new Blob([JSON.stringify(data.preset || body, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "quick-study-preset.json";
+    a.click();
+  });
+}
+const presetFile = document.getElementById("preset-file");
+if (presetFile) {
+  presetFile.addEventListener("change", async () => {
+    if (!presetFile.files || !presetFile.files[0]) return;
+    const text = await presetFile.files[0].text();
+    const data = JSON.parse(text);
+    Object.entries(data).forEach(([k, v]) => {
+      if (form[k] != null) form[k].value = v;
+      if (form[k] && form[k].type === "checkbox") form[k].checked = !!v;
+    });
+  });
+}
+
 const importPack = document.getElementById("import-pack");
 if (importPack) {
   importPack.addEventListener("change", async () => {

@@ -159,6 +159,11 @@
           <span>上传 ZIP 生成本地教程</span>
           <input id="zip-upload" type="file" accept=".zip">
         </label>
+        <label class="field">
+          <span>导入/导出生成参数 JSON</span>
+          <input id="preset-file" type="file" accept="application/json">
+          <button type="button" id="preset-export">导出预设</button>
+        </label>
       </form>
     </section>
 
@@ -183,6 +188,12 @@
     </section>
   </main>
 
+  {% if continue_card %}
+  <section class="library continue-card" aria-labelledby="continue-title">
+    <h2 id="continue-title">今日继续读</h2>
+    <p><a href="{{ continue_card.href }}">{{ continue_card.tutorial }} / {{ continue_card.filename }}</a></p>
+  </section>
+  {% endif %}
   <section class="library" aria-labelledby="library-title">
     <h2 id="library-title">已生成</h2>
     <form id="search-form" class="field" role="search">

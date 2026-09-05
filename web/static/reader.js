@@ -180,6 +180,30 @@
     }
   });
 
+  const exBox = document.getElementById("exercise-box");
+  const exList = document.getElementById("exercise-list");
+  if (exBox && exList && name) {
+    fetch(`/api/tutorials/${encodeURIComponent(name)}/exercises`)
+      .then((r) => r.json())
+      .then((data) => {
+        const file = decodeURIComponent(path.split("/").pop() || "");
+        const item = (data.items || []).find((q) => q.filename === file);
+        if (!item) return;
+        exBox.hidden = false;
+        item.items.forEach((q) => {
+          const li = document.createElement("li");
+          li.textContent = q.prompt;
+          exList.appendChild(li);
+        });
+      })
+      .catch(() => {});
+  }
+  fetch("/api/continue", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  }).catch(() => {});
+
   document.querySelectorAll("code, .copy-path").forEach((node) => {
     const text = node.getAttribute("data-path") || node.textContent || "";
     if (text.includes("#") && text.includes("/")) {

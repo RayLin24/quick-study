@@ -57,8 +57,21 @@
       </ol>
     </aside>
     <article class="prose">
+      {% if stale and stale.stale %}
+      <p class="stale-banner" role="status">教程可能过期：上游 commit 已漂移（{{ stale.recorded }} → {{ stale.current }}）</p>
+      {% endif %}
       {% if quality %}
       <p class="quality-banner" data-score="{{ quality.score }}">质量评分 {{ quality.score }}{% if not quality.ok %} · 有断链/空章/缺 source{% endif %}</p>
+      {% endif %}
+      {% if week_path and week_path.days %}
+      <aside class="week-path">
+        <h2>新手一周读完</h2>
+        <ol>
+          {% for day in week_path.days %}
+          <li>{{ day.day }}：{% for item in day.chapters %}{{ item.title }}{% if not loop.last %}、{% endif %}{% endfor %}</li>
+          {% endfor %}
+        </ol>
+      </aside>
       {% endif %}
       {% if outcomes %}
       <aside class="learn-box" aria-label="你将学到">
@@ -145,6 +158,10 @@
     <div id="quiz-box" hidden>
       <h2>本章小测</h2>
       <ol id="quiz-list"></ol>
+    </div>
+    <div id="exercise-box" hidden>
+      <h2>改这一处</h2>
+      <ol id="exercise-list"></ol>
     </div>
   </section>
   <script src="/static/vendor/highlight.min.js"></script>
