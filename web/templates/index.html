@@ -13,6 +13,7 @@
     <p class="tag" data-i18n="tag">把代码库变成可读教程</p>
     <nav class="export-nav" aria-label="工具">
       <a href="/jobs">任务历史</a>
+      <a href="/feed.xml">Atom</a>
       <button type="button" id="lang-toggle" data-lang="{{ ui_lang or 'zh' }}">{{ 'English' if ui_lang == 'en' else '中文' }}</button>
     </nav>
   </header>
@@ -184,6 +185,15 @@
 
   <section class="library" aria-labelledby="library-title">
     <h2 id="library-title">已生成</h2>
+    <form id="search-form" class="field" role="search">
+      <span>搜索教程（标题+正文）</span>
+      <input id="search-q" type="search" placeholder="入口 / main.py" autocomplete="off">
+    </form>
+    <ul id="search-hits" class="cards" hidden></ul>
+    <label class="field">
+      <span>导入他人导出的教程 zip</span>
+      <input id="import-pack" type="file" accept=".zip">
+    </label>
     <ul id="tutorial-list" class="cards">
       {% for item in tutorials %}
       <li>
