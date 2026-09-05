@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="{{ 'en' if ui_lang == 'en' else 'zh-CN' }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ i18n.strings.jobs }} · Quick Study</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">Quick Study</a>
+    <p class="tag">{{ i18n.strings.jobs }}</p>
+    <a href="/">← 生成</a>
+  </header>
+  <main class="layout">
+    <section class="panel">
+      <h1>{{ i18n.strings.jobs }}</h1>
+      <p class="ask-hint">记录成败、usage、耗时与按供应商估算费用。单机文件 <code>output/job_history.jsonl</code>。</p>
+      <table class="jobs-table">
+        <thead>
+          <tr>
+            <th>状态</th>
+            <th>教程</th>
+            <th>耗时</th>
+            <th>tokens</th>
+            <th>估费用</th>
+            <th>错误</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in items %}
+          <tr>
+            <td>{{ item.status }}</td>
+            <td>{% if item.output_name %}<a href="/t/{{ item.output_name }}">{{ item.output_name }}</a>{% else %}—{% endif %}</td>
+            <td>{{ item.duration_seconds or "—" }}s</td>
+            <td>{% if item.usage %}{{ item.usage.total_tokens }}{% else %}—{% endif %}</td>
+            <td>{% if item.cost %}${{ "%.4f"|format(item.cost.usd) }} {{ item.cost.provider }}{% else %}—{% endif %}</td>
+            <td>{{ item.error or "" }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6">还没有任务历史。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

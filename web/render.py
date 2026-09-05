@@ -226,6 +226,7 @@ def markdown_to_html(
     *,
     cover: bool = False,
     repo_url: str | None = None,
+    local_dir: str | None = None,
     return_toc: bool = False,
 ):
     if text.startswith("---"):
@@ -245,7 +246,15 @@ def markdown_to_html(
         replacement = (
             f'<figure class="diagram{extra}">'
             f"<figcaption>{caption}</figcaption>"
+            f'<div class="mermaid-zoom" data-zoom="1">'
+            f'<div class="mermaid-toolbar">'
+            f'<button type="button" class="mermaid-zoom-in" aria-label="放大">+</button>'
+            f'<button type="button" class="mermaid-zoom-out" aria-label="缩小">−</button>'
+            f'<button type="button" class="mermaid-zoom-reset" aria-label="重置">1:1</button>'
+            f"</div>"
+            f'<div class="mermaid-scroller">'
             f'<div class="mermaid">{html_lib.escape(source)}</div>'
+            f"</div></div>"
             f"</figure>"
         )
         body = body.replace(f"<p>@@MERMAID{index}@@</p>", replacement)
@@ -269,10 +278,28 @@ def markdown_to_html(
     body, toc = add_h2_ids(body)
     from utils.source_format import linkify_source_html
 
-    body = linkify_source_html(body, repo_url=repo_url)
+    body = linkify_source_html(body, repo_url=repo_url, local_dir=local_dir)
+    body = _attach_editor_buttons(body)
     if return_toc:
         return body, toc
     return body
+
+
+def _attach_editor_buttons(html: str) -> str:
+    def repl(match: re.Match[str]) -> str:
+        path = match.group(2)
+        return (
+            f"{match.group(1)}"
+            f'<a class="open-editor" href="vscode://file/{html_lib.escape(path, quote=True)}" '
+            f'data-path="{html_lib.escape(path, quote=True)}">在编辑器打开</a>'
+        )
+
+    return re.sub(
+        r'(<code class="source-path" data-path="([^"]+)">.*?</code>)',
+        repl,
+        html or "",
+        flags=re.S,
+    )
 
 
 def _promote_image(match: re.Match[str]) -> str:

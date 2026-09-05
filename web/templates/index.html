@@ -10,7 +10,11 @@
 <body>
   <header class="top">
     <a class="brand" href="/">Quick Study</a>
-    <p class="tag">把代码库变成可读教程</p>
+    <p class="tag" data-i18n="tag">把代码库变成可读教程</p>
+    <nav class="export-nav" aria-label="工具">
+      <a href="/jobs">任务历史</a>
+      <button type="button" id="lang-toggle" data-lang="{{ ui_lang or 'zh' }}">{{ 'English' if ui_lang == 'en' else '中文' }}</button>
+    </nav>
   </header>
 
   <main class="layout">
@@ -128,8 +132,15 @@
           <button type="submit" id="submit-btn">确认生成</button>
           <button type="button" id="replace-btn">取消并开始</button>
           <button type="button" id="cancel-btn" hidden>取消任务</button>
+          <button type="button" id="pause-btn" hidden>暂停</button>
+          <button type="button" id="resume-btn" hidden>继续</button>
           <button type="button" id="smoke-btn">空状态试跑公开仓</button>
         </div>
+        <label class="choice">
+          <input type="checkbox" id="queue-job" checked>
+          忙碌时排队（不丢任务）
+        </label>
+        <p id="queue-status" class="ask-hint"></p>
         <details id="pat-wizard" class="pat-wizard">
           <summary>私有仓 PAT 向导</summary>
           <ol id="pat-steps">

@@ -13,10 +13,15 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from utils.allow_dir import assert_allowed_local_dir
+from utils.budget import BudgetExceeded, assert_budget, record_tokens
 from utils.errors import format_error
 from utils.gitlab_gitea import classify_repo_url
+from utils.job_control import is_paused, pause_process, request_pause, request_resume, resume_process
+from utils.job_history import append_history, list_history
+from utils.job_queue import dequeue, enqueue, load_queue
 from utils.language import DEFAULT_LANGUAGE, normalize_language
 from utils.partial import expected_output_name, isolate_cancelled_output
+from utils.provider_cost import estimate_from_usage
 from utils.redact import looks_like_secret_key, redact_lines, redact_text
 from utils.strategy import apply_strategy
 
@@ -118,6 +123,8 @@ def validate_start_request(payload: dict) -> dict:
         "bilingual": bool(payload.get("bilingual")),
         "pagerank_order": bool(payload.get("pagerank_order")),
         "seed_files": payload.get("seed_files") or None,
+        "queue": bool(payload.get("queue")),
+        "retry_chapter": str(payload.get("retry_chapter") or "").strip() or None,
     }
 
     if source_type == "repo":
@@ -284,6 +291,8 @@ class Job:
         self.retry_after: Optional[int] = None
         self.timeout = timeout
         self.cancelled = False
+        self.paused = False
+        self.started_at = time.time()
         self.proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
 
@@ -380,6 +389,9 @@ class Job:
                 "usage": self.usage,
                 "retry_after": self.retry_after,
                 "source_type": self.payload.get("source_type"),
+                "paused": self.paused,
+                "cost": estimate_from_usage(self.usage) if self.usage else None,
+                "started_at": self.started_at,
             }
 
     def persist_payload(self) -> dict:
@@ -431,11 +443,29 @@ class JobManager:
                     "step": None,
                     "usage": None,
                     "retry_after": None,
+                    "paused": False,
+                    "cost": None,
+                    "queue": load_queue(self.output_dir),
                 }
-            return self._job.snapshot(after=after)
+            snap = self._job.snapshot(after=after)
+            snap["queue"] = load_queue(self.output_dir)
+            return snap
 
     def start(self, payload: dict) -> dict:
         data = validate_start_request(payload)
+        assert_budget(self.output_dir)
+        if data.get("queue") and not data.get("replace"):
+            with self._lock:
+                busy = self._job is not None and self._job.status == "running"
+            if busy:
+                item = enqueue(self.output_dir, data)
+                return {
+                    "status": "queued",
+                    "queued": True,
+                    "id": item["id"],
+                    "position": item["position"],
+                    "queue": load_queue(self.output_dir),
+                }
         if data.get("replace"):
             with self._lock:
                 current = self._job
@@ -465,7 +495,38 @@ class JobManager:
             if job is None or job.status != "running":
                 raise ValueError("当前没有运行中的任务")
             job.request_cancel()
+        request_resume(self.output_dir)
         return job.snapshot()
+
+    def pause(self) -> dict:
+        with self._lock:
+            job = self._job
+            if job is None or job.status != "running":
+                raise ValueError("当前没有运行中的任务")
+            job.paused = True
+            pid = job.proc.pid if job.proc is not None else None
+        request_pause(self.output_dir)
+        pause_process(pid)
+        job.append_log("QUICK_STUDY_PAUSE: 1")
+        return job.snapshot()
+
+    def resume(self) -> dict:
+        with self._lock:
+            job = self._job
+            if job is None or job.status != "running":
+                raise ValueError("当前没有运行中的任务")
+            job.paused = False
+            pid = job.proc.pid if job.proc is not None else None
+        request_resume(self.output_dir)
+        resume_process(pid)
+        job.append_log("QUICK_STUDY_PAUSE: 0")
+        return job.snapshot()
+
+    def history(self, limit: int = 50) -> list[dict]:
+        return list_history(self.output_dir, limit=limit)
+
+    def queue_snapshot(self) -> list[dict]:
+        return load_queue(self.output_dir)
 
     def wait(self, timeout: Optional[float] = None) -> None:
         thread = self._thread
@@ -510,12 +571,34 @@ class JobManager:
                     job.append_log(f"QUICK_STUDY_PARTIAL: {moved.as_posix()}")
             self._persist(job)
             if job.status in {"succeeded", "failed", "cancelled"}:
+                if job.usage and job.usage.get("total_tokens"):
+                    try:
+                        record_tokens(self.output_dir, int(job.usage.get("total_tokens") or 0))
+                    except Exception:
+                        pass
+                try:
+                    append_history(self.output_dir, job.snapshot(), started_at=job.started_at)
+                except Exception as exc:
+                    job.append_log(f"QUICK_STUDY_WARN: history {exc}")
                 try:
                     from utils.webhook import notify_completion
 
                     notify_completion(job.snapshot())
                 except Exception as exc:
                     job.append_log(f"QUICK_STUDY_WARN: webhook {exc}")
+                self._drain_queue()
+
+    def _drain_queue(self) -> None:
+        item = dequeue(self.output_dir)
+        if not item:
+            return
+        payload = item.get("payload") or {}
+        try:
+            self.start(payload)
+        except (JobBusyError, ValueError, BudgetExceeded) as exc:
+            enqueue(self.output_dir, payload)
+            if self._job is not None:
+                self._job.append_log(f"QUICK_STUDY_WARN: queue {exc}")
 
     def _persist(self, job: Job) -> None:
         try:
