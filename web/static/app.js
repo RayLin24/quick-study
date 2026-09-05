@@ -46,6 +46,10 @@ function setStatus(text) {
 function setRunning(running) {
   submitBtn.disabled = running;
   cancelBtn.hidden = !running;
+  const pauseBtn = document.getElementById("pause-btn");
+  const resumeBtn = document.getElementById("resume-btn");
+  if (pauseBtn) pauseBtn.hidden = !running;
+  if (resumeBtn) resumeBtn.hidden = true;
 }
 
 function appendLog(line) {
@@ -348,6 +352,7 @@ function jobBody() {
     include: form.include.value.trim(),
     exclude: form.exclude.value.trim(),
     max_size: form.max_size.value ? Number(form.max_size.value) : null,
+    queue: !!(document.getElementById("queue-job") && document.getElementById("queue-job").checked),
     resume: !!(form.resume && form.resume.checked),
     incremental: !!(form.incremental && form.incremental.checked),
     overview_only: !!(form.overview_only && form.overview_only.checked),
@@ -377,6 +382,12 @@ function showPreview(data) {
     data.truncated_files ? `上下文截断 ${data.truncated_files}` : null,
   ].filter(Boolean).join(" · ");
   previewCard.appendChild(info);
+  if (data.cost) {
+    const cost = document.createElement("p");
+    cost.className = "ask-hint";
+    cost.textContent = `预估费用 ${data.cost.provider} $${data.cost.usd}（${data.cost.note}）`;
+    previewCard.appendChild(cost);
+  }
   if (data.warning) {
     const warn = document.createElement("p");
     warn.className = "error";
@@ -448,6 +459,13 @@ form.addEventListener("submit", async (event) => {
     if (!res.ok) {
       throw new Error(data.detail || "无法启动任务");
     }
+    if (data.queued || data.status === "queued") {
+      setRunning(false);
+      setStatus("已排队");
+      const qel = document.getElementById("queue-status");
+      if (qel) qel.textContent = `队列位置 ${data.position || "?"}`;
+      return;
+    }
     setStatus("运行中");
     logCursor = data.log_cursor || 0;
     if (data.logs) {
@@ -460,6 +478,38 @@ form.addEventListener("submit", async (event) => {
     setError(err.message);
   }
 });
+
+const pauseBtn = document.getElementById("pause-btn");
+const resumeBtn = document.getElementById("resume-btn");
+if (pauseBtn) {
+  pauseBtn.addEventListener("click", async () => {
+    const res = await fetch("/api/jobs/current/pause", { method: "POST" });
+    if (res.ok) {
+      setStatus("已暂停");
+      pauseBtn.hidden = true;
+      if (resumeBtn) resumeBtn.hidden = false;
+    }
+  });
+}
+if (resumeBtn) {
+  resumeBtn.addEventListener("click", async () => {
+    const res = await fetch("/api/jobs/current/resume", { method: "POST" });
+    if (res.ok) {
+      setStatus("运行中");
+      resumeBtn.hidden = true;
+      if (pauseBtn) pauseBtn.hidden = false;
+    }
+  });
+}
+
+const homeLang = document.getElementById("lang-toggle");
+if (homeLang) {
+  homeLang.addEventListener("click", () => {
+    const next = (homeLang.getAttribute("data-lang") || "zh") === "zh" ? "en" : "zh";
+    document.cookie = `qs_lang=${next};path=/;samesite=lax`;
+    location.reload();
+  });
+}
 
 cancelBtn.addEventListener("click", async () => {
   try {

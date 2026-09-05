@@ -40,15 +40,32 @@ def github_blob_url(repo_url: str, path: str) -> str | None:
     return f"{base}/blob/HEAD/{quote(path)}"
 
 
-def linkify_source_html(html: str, *, repo_url: str | None = None) -> str:
-    def repl(match: re.Match[str]) -> str:
-        path = match.group(1).strip()
-        href = github_blob_url(repo_url, path) if repo_url else None
-        if href:
-            return f'*source: <a href="{href}" target="_blank" rel="noreferrer">{path}</a>*'
-        return (
-            f'*source: <code class="source-path" data-path="{path}">{path}</code>'
-            f'<button type="button" class="copy-path" data-path="{path}">复制路径</button>*'
-        )
+HTML_SOURCE_RE = re.compile(
+    r"(?:<em>source:</em>|<em>source:)\s*`?([^<*`\s]+)(?:</em>)?",
+    re.IGNORECASE,
+)
 
-    return SOURCE_LINE_RE.sub(repl, html or "")
+
+def _source_buttons(path: str, *, repo_url: str | None, local_dir: str | None) -> str:
+    from utils.editor_open import resolve_editor_url
+
+    href = github_blob_url(repo_url, path) if repo_url else None
+    editor = resolve_editor_url(path, local_dir=local_dir)
+    open_btn = f'<a class="open-editor" href="{editor["vscode"]}" data-path="{path}">在编辑器打开</a>'
+    if href:
+        return f'*source: <a href="{href}" target="_blank" rel="noreferrer">{path}</a>* {open_btn}'
+    return (
+        f'*source: <code class="source-path" data-path="{path}">{path}</code>'
+        f'<button type="button" class="copy-path" data-path="{path}">复制路径</button> {open_btn}'
+    )
+
+
+def linkify_source_html(html: str, *, repo_url: str | None = None, local_dir: str | None = None) -> str:
+    def repl_md(match: re.Match[str]) -> str:
+        return _source_buttons(match.group(1).strip(), repo_url=repo_url, local_dir=local_dir)
+
+    def repl_html(match: re.Match[str]) -> str:
+        return _source_buttons(match.group(1).strip(), repo_url=repo_url, local_dir=local_dir)
+
+    text = SOURCE_LINE_RE.sub(repl_md, html or "")
+    return HTML_SOURCE_RE.sub(repl_html, text)

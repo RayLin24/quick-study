@@ -17,7 +17,20 @@ from utils.annotations import add_annotation, load_annotations
 from utils.ask_thread import ask_with_thread
 from utils.ask_tutorial import AskRefused, AskResult, ask_tutorial_detailed
 from utils.auth_errors import AUTH_READ_ONLY, AUTH_UNAUTHORIZED, read_only, unauthorized
+from utils.budget import BudgetExceeded, assert_budget
+from utils.commit_range import commit_range_guide
 from utils.cost_hint import max_abstractions_cost_hint
+from utils.editor_open import resolve_editor_url
+from utils.graph_color import color_mermaid
+from utils.i18n import catalog, normalize_ui_lang
+from utils.job_history import list_history
+from utils.learn_outcomes import learning_outcomes
+from utils.local_watch import watch_status
+from utils.next_chapter import recommend_next
+from utils.provider_cost import estimate_from_usage, estimate_preview_calls
+from utils.quality_score import score_tutorial
+from utils.repo_diff_guide import compare_repos
+from utils.retry_chapter import failed_chapters, mark_chapter_for_retry
 from utils.deepwiki import deepwiki_url
 from utils.digest import gitingest_digest
 from utils.errors import format_error
@@ -102,6 +115,8 @@ class JobIn(BaseModel):
     bilingual: bool = False
     pagerank_order: bool = False
     seed_files: list[str] = Field(default_factory=list)
+    queue: bool = False
+    retry_chapter: str = ""
 
 
 class RenameIn(BaseModel):
@@ -139,6 +154,33 @@ class CompareIn(BaseModel):
 class McpCallIn(BaseModel):
     name: str = ""
     arguments: dict = Field(default_factory=dict)
+
+
+class CompareReposIn(BaseModel):
+    left: str = ""
+    right: str = ""
+
+
+class CommitRangeIn(BaseModel):
+    local_dir: str = ""
+    since: str = ""
+    until: str = "HEAD"
+
+
+class ColorGraphIn(BaseModel):
+    source: str = ""
+    files: list[str] = Field(default_factory=list)
+    by: str = "lang"
+
+
+class EditorIn(BaseModel):
+    path: str = ""
+    local_dir: str = ""
+    line: int | None = None
+
+
+class RetryChapterIn(BaseModel):
+    filename: str = ""
 
 
 def create_app(
@@ -211,6 +253,8 @@ def create_app(
             "smoke_repo": "https://github.com/octocat/Hello-World",
             "max_abstractions_hint": max_abstractions_cost_hint(16),
             "pat_steps": wizard_steps(),
+            "i18n": catalog("zh"),
+            "cost_rates": estimate_from_usage({"prompt_tokens": 0, "completion_tokens": 0}),
         }
 
     @app.get("/login", response_class=HTMLResponse)
@@ -230,6 +274,7 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):
+        lang = normalize_ui_lang(request.cookies.get("qs_lang") or request.query_params.get("lang"))
         return TEMPLATES.TemplateResponse(
             request,
             "index.html",
@@ -238,6 +283,8 @@ def create_app(
                 "default_language": DEFAULT_LANGUAGE,
                 "strategies": STRATEGIES,
                 "include_presets": INCLUDE_PRESETS,
+                "i18n": catalog(lang),
+                "ui_lang": lang,
             },
         )
 
@@ -258,10 +305,13 @@ def create_app(
             ) from exc
         folder = output / tutorial_name
         try:
+            assert_budget(output)
             if body.thread:
                 raw = ask_with_thread(folder, body.question)
             else:
                 raw = app.state.ask_fn(folder, body.question)
+        except BudgetExceeded as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         except AskRefused as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
@@ -271,20 +321,39 @@ def create_app(
                 "answer": raw.answer,
                 "used_chapters": raw.used_chapters,
                 "routed": raw.routed,
+                "citations": raw.citations,
+                "markdown": raw.markdown or raw.answer,
+                "degraded": raw.degraded,
+                "attempts": raw.attempts,
             }
         if isinstance(raw, dict) and "answer" in raw:
             return {
                 "answer": raw["answer"],
                 "used_chapters": raw.get("used_chapters") or [],
                 "routed": bool(raw.get("routed")),
+                "citations": raw.get("citations") or [],
+                "markdown": raw.get("markdown") or raw["answer"],
+                "degraded": bool(raw.get("degraded")),
+                "attempts": raw.get("attempts") or 1,
             }
-        return {"answer": raw, "used_chapters": [], "routed": False}
+        return {
+            "answer": raw,
+            "used_chapters": [],
+            "routed": False,
+            "citations": [],
+            "markdown": raw,
+            "degraded": False,
+            "attempts": 1,
+        }
 
     @app.post("/api/jobs/preview")
     def api_preview_job(body: JobIn):
         try:
             data = validate_start_request(body.model_dump())
-            return preview_generation(data)
+            preview = preview_generation(data)
+            est = (preview.get("estimated_calls") or {}).get("total") or 0
+            preview["cost"] = estimate_preview_calls(est)
+            return preview
         except PreviewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except ValueError as exc:
@@ -300,8 +369,45 @@ def create_app(
             return manager.start(body.model_dump())
         except JobBusyError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except BudgetExceeded as exc:
+            raise HTTPException(status_code=429, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/jobs/queue")
+    def api_job_queue():
+        return {"items": manager.queue_snapshot()}
+
+    @app.get("/api/jobs/history")
+    def api_job_history(limit: int = 50):
+        return {"items": manager.history(limit)}
+
+    @app.get("/jobs", response_class=HTMLResponse)
+    def jobs_page(request: Request):
+        lang = normalize_ui_lang(request.cookies.get("qs_lang") or request.query_params.get("lang"))
+        return TEMPLATES.TemplateResponse(
+            request,
+            "jobs.html",
+            {"items": list_history(output), "i18n": catalog(lang), "ui_lang": lang},
+        )
+
+    @app.post("/api/jobs/current/pause")
+    def api_pause_job():
+        try:
+            return manager.pause()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/jobs/current/resume")
+    def api_resume_job():
+        try:
+            return manager.resume()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/budget")
+    def api_budget():
+        return assert_budget(output)
 
     @app.delete("/api/tutorials/{tutorial_name}")
     def api_delete_tutorial(tutorial_name: str):
@@ -442,6 +548,7 @@ def create_app(
             tutorial_name,
             cover=filename == "index.md",
             repo_url=meta.get("repo_url"),
+            local_dir=meta.get("local_dir"),
             return_toc=True,
         )
         return TEMPLATES.TemplateResponse(
@@ -462,6 +569,11 @@ def create_app(
                 "relationship_warnings": meta.get("relationship_warnings") or {},
                 "deepwiki": deepwiki_url(meta.get("repo_url")),
                 "llm_timeout": float(os.getenv("LLM_TIMEOUT_SECONDS") or 300),
+                "outcomes": learning_outcomes(text, language=str(meta.get("language") or "Chinese")),
+                "next_smart": recommend_next(output / tutorial_name, filename) if filename != "index.md" else {},
+                "quality": score_tutorial(output / tutorial_name) if filename == "index.md" else {},
+                "i18n": catalog(normalize_ui_lang(request.cookies.get("qs_lang"))),
+                "ui_lang": normalize_ui_lang(request.cookies.get("qs_lang")),
             },
         )
 
@@ -599,6 +711,82 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/i18n")
+    def api_i18n(lang: str = "zh"):
+        return catalog(lang)
+
+    @app.get("/api/tutorials/{tutorial_name}/quality")
+    def api_quality(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return score_tutorial(folder)
+
+    @app.get("/api/tutorials/{tutorial_name}/next")
+    def api_next_chapter(tutorial_name: str, filename: str = "index.md"):
+        folder = tutorial_folder(output, tutorial_name)
+        return recommend_next(folder, filename)
+
+    @app.get("/api/tutorials/{tutorial_name}/watch")
+    def api_watch(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return watch_status(folder)
+
+    @app.get("/api/tutorials/{tutorial_name}/failed-chapters")
+    def api_failed_chapters(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return {"items": failed_chapters(folder)}
+
+    @app.post("/api/tutorials/{tutorial_name}/retry-chapter")
+    def api_retry_chapter(tutorial_name: str, body: RetryChapterIn):
+        folder = tutorial_folder(output, tutorial_name)
+        cleared = mark_chapter_for_retry(folder, body.filename)
+        meta = {}
+        meta_path = folder / "meta.json"
+        if meta_path.is_file():
+            try:
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                meta = {}
+        payload = {
+            "source_type": "repo" if meta.get("repo_url") else "dir",
+            "repo_url": meta.get("repo_url") or "",
+            "local_dir": meta.get("local_dir") or "",
+            "name": meta.get("name") or tutorial_name,
+            "language": meta.get("language") or DEFAULT_LANGUAGE,
+            "resume": True,
+            "retry_chapter": body.filename,
+            "queue": True,
+        }
+        if not payload["repo_url"] and not payload["local_dir"]:
+            return {"ok": True, "cleared": cleared, "queued": False, "reason": "no_source"}
+        try:
+            started = manager.start(payload)
+        except JobBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "cleared": cleared, "job": started}
+
+    @app.post("/api/compare-repos")
+    def api_compare_repos(body: CompareReposIn):
+        left = tutorial_folder(output, body.left)
+        right = tutorial_folder(output, body.right)
+        return compare_repos(left, right, left_name=body.left, right_name=body.right)
+
+    @app.post("/api/guides/commits")
+    def api_commit_range(body: CommitRangeIn):
+        try:
+            return commit_range_guide(body.local_dir, body.since, body.until)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/graph/color")
+    def api_color_graph(body: ColorGraphIn):
+        return {"source": color_mermaid(body.source, body.files, by=body.by or "lang")}
+
+    @app.post("/api/editor/open")
+    def api_editor_open(body: EditorIn):
+        return resolve_editor_url(body.path, local_dir=body.local_dir or None, line=body.line)
 
     return app
 

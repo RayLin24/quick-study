@@ -9,6 +9,8 @@ from utils.call_llm import call_llm
 from utils.crawl_local_files import crawl_local_files
 from utils.errors import format_error
 from utils.progress import emit_step
+from pathlib import Path
+
 from utils.repo_map import build_repo_map, expand_abstraction_files
 
 # Chapters are written concurrently; keep enough headroom that the provider does not
@@ -202,7 +204,9 @@ def finalize_chapter(chapter_content, chapter_num, abstraction_name):
         raise ValueError(
             f"Chapter {chapter_num} is too short ({len(text)} chars); expected at least {MIN_CHAPTER_CHARS}"
         )
-    return text
+    from utils.learn_outcomes import inject_outcomes
+
+    return inject_outcomes(text)
 
 
 # Helper to get content for specific file indices
@@ -984,6 +988,10 @@ class WriteChapters(AsyncParallelBatchNode):
         language = item.get("language", "english")
         use_cache = item.get("use_cache", True) # Read use_cache from item
 
+        if item.get("output_folder"):
+            from utils.job_control import wait_if_paused
+
+            wait_if_paused(Path(item["output_folder"]).parent)
         if item.get("saved_chapter"):
             print(f"Resuming chapter {chapter_num} from disk.")
             return item["saved_chapter"]
@@ -1251,6 +1259,13 @@ class CombineTutorial(Node):
                 )
 
         mermaid_diagram = "\n".join(mermaid_lines + click_lines)
+        try:
+            from utils.graph_color import color_mermaid
+
+            file_names = [item[0] if isinstance(item, (list, tuple)) else str(item) for item in (shared.get("files") or [])]
+            mermaid_diagram = color_mermaid(mermaid_diagram, file_names, by="lang")
+        except Exception:
+            pass
         # Insert the diagram above the chapter list.
         diagram_block = "```mermaid\n" + mermaid_diagram + "\n```\n\n"
         marker = "## 推荐阅读路径\n\n"
@@ -1278,6 +1293,7 @@ class CombineTutorial(Node):
             "files": shared.get("files") or [],
             "relationships": shared.get("relationships") or {},
             "strategy": shared.get("strategy"),
+            "local_dir": shared.get("local_dir"),
         }
 
     def exec(self, prep_res):
@@ -1327,6 +1343,7 @@ class CombineTutorial(Node):
             "relationship_warnings": prep_res.get("relationship_warnings"),
             "chapter_count": len(chapter_files),
             "strategy": prep_res.get("strategy"),
+            "local_dir": prep_res.get("local_dir"),
         }
         meta_path = os.path.join(output_path, "meta.json")
         with open(meta_path, "w", encoding="utf-8") as f:

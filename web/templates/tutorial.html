@@ -25,6 +25,12 @@
       <a href="/embed/{{ tutorial_name }}">embed</a>
       {% if deepwiki %}<a href="{{ deepwiki }}" rel="noopener" target="_blank">DeepWiki</a>{% endif %}
       <button type="button" id="theme-toggle">深色阅读</button>
+      <button type="button" id="lang-toggle" data-lang="{{ ui_lang or 'zh' }}">{{ 'EN' if ui_lang == 'en' else '中' }}</button>
+      <div class="a11y-bar" aria-label="阅读无障碍">
+        <button type="button" id="a11y-size" title="字号">A</button>
+        <button type="button" id="a11y-leading" title="行距">行距</button>
+        <button type="button" id="a11y-contrast" title="高对比">对比</button>
+      </div>
       <button type="button" id="toc-drawer-btn" class="toc-drawer-btn">目录</button>
       <button type="button" id="star-btn">收藏</button>
       <button type="button" id="tts-btn">朗读</button>
@@ -49,6 +55,19 @@
       </ol>
     </aside>
     <article class="prose">
+      {% if quality %}
+      <p class="quality-banner" data-score="{{ quality.score }}">质量评分 {{ quality.score }}{% if not quality.ok %} · 有断链/空章/缺 source{% endif %}</p>
+      {% endif %}
+      {% if outcomes %}
+      <aside class="learn-box" aria-label="你将学到">
+        <h2>你将学到</h2>
+        <ol>
+          {% for item in outcomes %}
+          <li>{{ item }}</li>
+          {% endfor %}
+        </ol>
+      </aside>
+      {% endif %}
       {% if truncation %}
       <p class="trunc-banner" data-truncated="{{ truncation.truncated }}" data-total="{{ truncation.total }}">引用文件截断：{{ truncation.truncated }} / {{ truncation.total }}</p>
       {% endif %}
@@ -65,6 +84,13 @@
       {{ body | safe }}
       {% if truncation %}
       <p class="trunc-banner trunc-banner-foot">引用文件截断：{{ truncation.truncated }} / {{ truncation.total }}</p>
+      {% endif %}
+      {% if next_smart and next_smart.recommended %}
+      <aside class="next-smart">
+        <h2>下一步（智能推荐）</h2>
+        <p><a href="/t/{{ tutorial_name }}/{{ next_smart.recommended.filename }}">{{ next_smart.recommended.title }}</a>
+          <span class="ask-hint">{{ next_smart.recommended.reason }}</span></p>
+      </aside>
       {% endif %}
       <nav class="pager" aria-label="相邻章节">
         {% if prev_chapter %}
@@ -95,6 +121,7 @@
         </label>
         <p id="ask-countdown" class="ask-hint" data-timeout="{{ llm_timeout }}">Ask 超时对照 LLM_TIMEOUT={{ llm_timeout }}s</p>
         <button type="button" id="ask-btn">提问</button>
+        <button type="button" id="ask-copy-md" hidden>复制为 Markdown</button>
         <p id="ask-error" class="error" hidden></p>
         <div id="ask-answer" class="ask-answer" hidden></div>
         <details id="ask-used" class="ask-used" hidden>
@@ -213,14 +240,26 @@
           }
           askAns.hidden = false;
           askAns.textContent = data.answer;
+          const copyBtn = document.getElementById("ask-copy-md");
+          if (copyBtn) {
+            copyBtn.hidden = false;
+            copyBtn.onclick = async () => {
+              await navigator.clipboard.writeText(data.markdown || data.answer || "");
+              copyBtn.textContent = "已复制 Markdown";
+            };
+          }
           const used = document.getElementById("ask-used");
           const usedList = document.getElementById("ask-used-list");
-          if (used && usedList && data.used_chapters && data.used_chapters.length) {
+          const cites = data.citations && data.citations.length ? data.citations : data.used_chapters;
+          if (used && usedList && cites && cites.length) {
             used.hidden = false;
             usedList.innerHTML = "";
-            data.used_chapters.forEach((ch) => {
+            cites.forEach((ch) => {
               const li = document.createElement("li");
-              li.textContent = `${ch.filename || ""} ${ch.title || ""}`.trim();
+              const a = document.createElement("a");
+              a.href = ch.href || (`/t/{{ tutorial_name }}/` + (ch.filename || ""));
+              a.textContent = `${ch.filename || ""} ${ch.title || ""}`.trim();
+              li.appendChild(a);
               usedList.appendChild(li);
             });
           }

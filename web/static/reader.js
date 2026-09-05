@@ -125,6 +125,61 @@
       .catch(() => {});
   }
 
+  const A11Y = "qs-a11y";
+  function applyA11y(cfg) {
+    document.body.classList.toggle("a11y-lg", !!cfg.size);
+    document.body.classList.toggle("a11y-lh", !!cfg.leading);
+    document.body.classList.toggle("a11y-hc", !!cfg.contrast);
+  }
+  let a11y = { size: false, leading: false, contrast: false };
+  try { a11y = Object.assign(a11y, JSON.parse(localStorage.getItem(A11Y) || "{}")); } catch {}
+  applyA11y(a11y);
+  function bindA11y(id, key) {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.addEventListener("click", () => {
+      a11y[key] = !a11y[key];
+      localStorage.setItem(A11Y, JSON.stringify(a11y));
+      applyA11y(a11y);
+    });
+  }
+  bindA11y("a11y-size", "size");
+  bindA11y("a11y-leading", "leading");
+  bindA11y("a11y-contrast", "contrast");
+
+  const langBtn = document.getElementById("lang-toggle");
+  if (langBtn) {
+    langBtn.addEventListener("click", () => {
+      const next = (langBtn.getAttribute("data-lang") || "zh") === "zh" ? "en" : "zh";
+      document.cookie = `qs_lang=${next};path=/;samesite=lax`;
+      location.reload();
+    });
+  }
+
+  document.querySelectorAll(".mermaid-zoom").forEach((box) => {
+    let scale = 1;
+    const scroller = box.querySelector(".mermaid-scroller");
+    const apply = () => {
+      box.setAttribute("data-zoom", String(scale));
+      const inner = box.querySelector(".mermaid");
+      if (inner) inner.style.transform = `scale(${scale})`;
+    };
+    const zin = box.querySelector(".mermaid-zoom-in");
+    const zout = box.querySelector(".mermaid-zoom-out");
+    const zreset = box.querySelector(".mermaid-zoom-reset");
+    if (zin) zin.addEventListener("click", () => { scale = Math.min(4, scale + 0.25); apply(); });
+    if (zout) zout.addEventListener("click", () => { scale = Math.max(0.4, scale - 0.25); apply(); });
+    if (zreset) zreset.addEventListener("click", () => { scale = 1; apply(); });
+    if (scroller) {
+      scroller.addEventListener("wheel", (ev) => {
+        if (!ev.ctrlKey && !ev.metaKey) return;
+        ev.preventDefault();
+        scale = Math.min(4, Math.max(0.4, scale + (ev.deltaY < 0 ? 0.15 : -0.15)));
+        apply();
+      }, { passive: false });
+    }
+  });
+
   document.querySelectorAll("code, .copy-path").forEach((node) => {
     const text = node.getAttribute("data-path") || node.textContent || "";
     if (text.includes("#") && text.includes("/")) {

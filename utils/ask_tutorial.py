@@ -47,6 +47,10 @@ class AskResult:
     used_chapters: list[dict] = field(default_factory=list)
     routed: bool = False
     top_k: int = 0
+    citations: list[dict] = field(default_factory=list)
+    markdown: str = ""
+    degraded: bool = False
+    attempts: int = 1
 
 
 def _tutorial_index(folder: Path) -> Path | None:
@@ -212,6 +216,13 @@ def build_ask_prompt(bundle: dict, question: str, selected: list[ChapterDoc] | N
 """
 
 
+def _invoke_ask(caller, prompt: str):
+    try:
+        return caller(prompt, use_cache=False, temperature=0.2, stage="ask")
+    except TypeError:
+        return caller(prompt, use_cache=False, temperature=0.2)
+
+
 def ask_tutorial_detailed(
     folder: Path,
     question: str,
@@ -225,18 +236,41 @@ def ask_tutorial_detailed(
         raise AskRefused(format_error("请输入问题"))
     bundle = collect_tutorial_bundle(folder)
     chapters: list[ChapterDoc] = bundle["chapters"]
-    selected, routed = select_ask_chapters(chapters, q, top_k=top_k, max_chars=max_chars)
+    budget = int(max_chars if max_chars is not None else ASK_MAX_CHARS)
+    k = top_k
+    selected, routed = select_ask_chapters(chapters, q, top_k=k, max_chars=budget)
     prompt = build_ask_prompt(bundle, q, selected)
     caller = call or call_llm
+    degraded = False
+    attempts = 1
     try:
-        answer = caller(prompt, use_cache=False, temperature=0.2, stage="ask")
-    except TypeError:
-        answer = caller(prompt, use_cache=False, temperature=0.2)
+        answer = _invoke_ask(caller, prompt)
+    except Exception as first:
+        # Feature 3: shrink context and retry once.
+        smaller = max(1200, budget // 3)
+        selected, routed = select_ask_chapters(chapters, q, top_k=1, max_chars=smaller)
+        prompt = build_ask_prompt(bundle, q, selected)
+        try:
+            answer = _invoke_ask(caller, prompt)
+            degraded = True
+            attempts = 2
+        except Exception:
+            raise first
+    used = [{"filename": ch.filename, "title": ch.title} for ch in selected]
+    from utils.ask_citations import extract_citations, used_chapter_citations
+
+    citations = extract_citations(answer, chapters, tutorial_name=Path(folder).name)
+    if not citations:
+        citations = used_chapter_citations(used, Path(folder).name, chapters)
     return AskResult(
         answer=answer,
-        used_chapters=[{"filename": ch.filename, "title": ch.title} for ch in selected],
+        used_chapters=used,
         routed=routed,
         top_k=len(selected),
+        citations=citations,
+        markdown=answer,
+        degraded=degraded,
+        attempts=attempts,
     )
 
 
