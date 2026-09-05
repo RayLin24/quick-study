@@ -17,8 +17,20 @@ from utils.annotations import add_annotation, load_annotations
 from utils.ask_thread import ask_with_thread
 from utils.ask_tutorial import AskRefused, AskResult, ask_tutorial_detailed
 from utils.auth_errors import AUTH_READ_ONLY, AUTH_UNAUTHORIZED, read_only, unauthorized
+from utils.audit_log import actor_id, append_audit, list_audit
 from utils.budget import BudgetExceeded, assert_budget
 from utils.commit_range import commit_range_guide
+from utils.demo_mode import demo_enabled, demo_payload, is_generate_path
+from utils.export_epub import build_epub
+from utils.export_obsidian import build_obsidian_zip, notion_index_markdown
+from utils.feed import atom_feed, rss_feed
+from utils.import_pack import ImportRefused, import_tutorial_zip
+from utils.ip_rate_limit import RateLimited, bucket_key, limiter_from_env
+from utils.jsonl_log import emit_run, tail_run
+from utils.key_rotation import detect_key_files
+from utils.otel import span
+from utils.tutorial_search import search_tutorials
+from utils.tutorial_tags import list_groups, set_tags
 from utils.cost_hint import max_abstractions_cost_hint
 from utils.editor_open import resolve_editor_url
 from utils.graph_color import color_mermaid
@@ -183,6 +195,11 @@ class RetryChapterIn(BaseModel):
     filename: str = ""
 
 
+class TagsIn(BaseModel):
+    tags: list[str] = Field(default_factory=list)
+    group: str = ""
+
+
 def create_app(
     *,
     output_dir: Path | None = None,
@@ -216,10 +233,25 @@ def create_app(
     app.state.output_dir = output
     app.state.require_auth = False
     app.state.ask_fn = ask_fn or ask_tutorial_detailed
+    app.state.rate_limiter = limiter_from_env()
 
     static_dir = WEB_DIR / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.middleware("http")
+    async def rate_limit_and_demo(request: Request, call_next):
+        path = request.url.path
+        if path.startswith("/static/") or path in {"/healthz", "/api/config"}:
+            return await call_next(request)
+        if demo_enabled() and is_generate_path(request.method, path):
+            return JSONResponse({"detail": demo_payload()["detail"], "code": "demo"}, status_code=403)
+        try:
+            token = token_from_headers(request.headers, request.cookies)
+            app.state.rate_limiter.check(bucket_key(ip=request.client.host if request.client else "", token=token))
+        except RateLimited as exc:
+            return JSONResponse({"detail": str(exc), "code": "rate_limited"}, status_code=429)
+        return await call_next(request)
 
     @app.middleware("http")
     async def auth_if_needed(request: Request, call_next):
@@ -293,7 +325,7 @@ def create_app(
         return {"items": list_tutorials(output)}
 
     @app.post("/api/tutorials/{tutorial_name}/ask")
-    def api_ask(tutorial_name: str, body: AskIn):
+    def api_ask(tutorial_name: str, body: AskIn, request: Request):
         try:
             resolve_tutorial_file(output, tutorial_name, "index.md")
         except ValueError as exc:
@@ -306,10 +338,18 @@ def create_app(
         folder = output / tutorial_name
         try:
             assert_budget(output)
-            if body.thread:
-                raw = ask_with_thread(folder, body.question)
-            else:
-                raw = app.state.ask_fn(folder, body.question)
+            actor = actor_id(
+                token=token_from_headers(request.headers, request.cookies),
+                session=request.cookies.get("quick_study_token") or "",
+                ip=request.client.host if request.client else "",
+            )
+            append_audit(output, action="ask", actor=actor, detail={"tutorial": tutorial_name})
+            emit_run(output, "ask", tutorial=tutorial_name)
+            with span("ask", output_dir=output, attributes={"tutorial": tutorial_name}):
+                if body.thread:
+                    raw = ask_with_thread(folder, body.question)
+                else:
+                    raw = app.state.ask_fn(folder, body.question)
         except BudgetExceeded as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         except AskRefused as exc:
@@ -442,7 +482,7 @@ def create_app(
         return PlainTextResponse(build_llms_txt(folder), media_type="text/plain")
 
     @app.get("/api/tutorials/{tutorial_name}/export.zip")
-    def api_export_zip(tutorial_name: str):
+    def api_export_zip(tutorial_name: str, request: Request):
         try:
             folder = tutorial_folder(output, tutorial_name)
         except ValueError as exc:
@@ -452,6 +492,8 @@ def create_app(
         from fastapi.responses import Response
 
         data = zip_tutorial(folder)
+        actor = actor_id(token=token_from_headers(request.headers, request.cookies), ip=request.client.host if request.client else "")
+        append_audit(output, action="export_zip", actor=actor, detail={"tutorial": tutorial_name})
         return Response(
             data,
             media_type="application/zip",
@@ -787,6 +829,75 @@ def create_app(
     @app.post("/api/editor/open")
     def api_editor_open(body: EditorIn):
         return resolve_editor_url(body.path, local_dir=body.local_dir or None, line=body.line)
+
+    @app.get("/api/search")
+    def api_search(q: str = ""):
+        return {"items": search_tutorials(output, q)}
+
+    @app.post("/api/tutorials/{tutorial_name}/tags")
+    def api_set_tags(tutorial_name: str, body: TagsIn):
+        tutorial_folder(output, tutorial_name)
+        return set_tags(output, tutorial_name, body.tags, body.group)
+
+    @app.get("/api/library/tags")
+    def api_library_tags():
+        return list_groups(output)
+
+    @app.post("/api/tutorials/import")
+    async def api_import_pack(file: UploadFile = File(...), name: str = ""):
+        blob = await file.read()
+        try:
+            result = import_tutorial_zip(blob, output, name=name or None)
+        except ImportRefused as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return result
+
+    @app.get("/api/tutorials/{tutorial_name}/obsidian.zip")
+    def api_obsidian(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return Response(
+            build_obsidian_zip(folder),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{tutorial_name}-obsidian.zip"'},
+        )
+
+    @app.get("/api/tutorials/{tutorial_name}/notion.md")
+    def api_notion(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return PlainTextResponse(notion_index_markdown(folder))
+
+    @app.get("/api/tutorials/{tutorial_name}/export.epub")
+    def api_epub(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return Response(
+            build_epub(folder),
+            media_type="application/epub+zip",
+            headers={"Content-Disposition": f'attachment; filename="{tutorial_name}.epub"'},
+        )
+
+    @app.get("/feed.xml")
+    def api_atom():
+        return Response(atom_feed(output), media_type="application/atom+xml")
+
+    @app.get("/rss.xml")
+    def api_rss():
+        return Response(rss_feed(output), media_type="application/rss+xml")
+
+    @app.get("/api/audit")
+    def api_audit(limit: int = 100):
+        return {"items": list_audit(output, limit=limit)}
+
+    @app.get("/api/ops/keys")
+    def api_key_rotation():
+        return detect_key_files(ROOT)
+
+    @app.get("/api/ops/logs")
+    def api_run_logs(limit: int = 50):
+        return {"items": tail_run(output, limit=limit)}
+
+    @app.get("/api/demo")
+    def api_demo():
+        return demo_payload() if demo_enabled() else {"demo": False}
 
     return app
 

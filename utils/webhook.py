@@ -23,8 +23,39 @@ def slack_body(job: dict) -> dict:
 def feishu_body(job: dict) -> dict:
     info = completion_payload(job)
     return {
-        "msg_type": "text",
-        "content": {"text": f"Quick Study {info['status']}: {info.get('output_name') or '-'}"},
+        "msg_type": "interactive",
+        "card": {
+            "header": {"title": {"tag": "plain_text", "content": f"Quick Study {info['status']}"}},
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": (
+                            f"**教程** {info.get('output_name') or '-'}\n"
+                            f"**文件** {info.get('file_count') or '-'}\n"
+                            f"**错误** {info.get('error') or '无'}"
+                        ),
+                    },
+                }
+            ],
+        },
+    }
+
+
+def dingtalk_body(job: dict) -> dict:
+    info = completion_payload(job)
+    return {
+        "msgtype": "markdown",
+        "markdown": {
+            "title": f"Quick Study {info['status']}",
+            "text": (
+                f"### Quick Study {info['status']}\n\n"
+                f"- 教程：{info.get('output_name') or '-'}\n"
+                f"- 文件：{info.get('file_count') or '-'}\n"
+                f"- 错误：{info.get('error') or '无'}"
+            ),
+        },
     }
 
 
@@ -32,12 +63,15 @@ def notify_completion(job: dict, *, timeout: float = 8) -> list[str]:
     sent = []
     slack = (os.getenv("SLACK_WEBHOOK_URL") or "").strip()
     feishu = (os.getenv("FEISHU_WEBHOOK_URL") or "").strip()
+    dingtalk = (os.getenv("DINGTALK_WEBHOOK_URL") or "").strip()
     extra = (os.getenv("COMPLETION_WEBHOOK_URL") or "").strip()
     targets = []
     if slack:
         targets.append(("slack", slack, slack_body(job)))
     if feishu:
         targets.append(("feishu", feishu, feishu_body(job)))
+    if dingtalk:
+        targets.append(("dingtalk", dingtalk, dingtalk_body(job)))
     if extra:
         targets.append(("generic", extra, completion_payload(job)))
     for name, url, body in targets:

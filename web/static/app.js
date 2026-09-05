@@ -607,6 +607,45 @@ if (maxAbs) {
   syncHint();
 }
 
+const searchForm = document.getElementById("search-form");
+const searchQ = document.getElementById("search-q");
+const searchHits = document.getElementById("search-hits");
+if (searchForm && searchQ && searchHits) {
+  searchForm.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const res = await fetch(`/api/search?q=${encodeURIComponent(searchQ.value)}`);
+    const data = await res.json();
+    searchHits.hidden = false;
+    searchHits.innerHTML = "";
+    (data.items || []).forEach((item) => {
+      const li = document.createElement("li");
+      const a = document.createElement("a");
+      a.href = item.href;
+      a.textContent = `${item.tutorial} / ${item.title}`;
+      li.appendChild(a);
+      searchHits.appendChild(li);
+    });
+    if (!(data.items || []).length) {
+      searchHits.innerHTML = "<li class='empty'>没有命中</li>";
+    }
+  });
+}
+const importPack = document.getElementById("import-pack");
+if (importPack) {
+  importPack.addEventListener("change", async () => {
+    if (!importPack.files || !importPack.files[0]) return;
+    const fd = new FormData();
+    fd.append("file", importPack.files[0]);
+    const res = await fetch("/api/tutorials/import", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.detail || "导入失败");
+      return;
+    }
+    refreshTutorials();
+  });
+}
+
 if (form && form.repo_url) {
   const params = new URLSearchParams(location.search);
   if (params.get("repo")) {

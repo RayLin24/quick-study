@@ -1,0 +1,22 @@
+# GitLab CI component (feature 29). Include from another project:
+# include:
+#   - component: $CI_SERVER_FQDN/RayLin24/quick-study/quick-study@main
+#     inputs:
+#       repo: https://gitlab.com/group/proj
+spec:
+  inputs:
+    repo:
+      default: https://github.com/octocat/Hello-World
+    language:
+      default: Chinese
+---
+generate:
+  image: python:3.12-slim
+  script:
+    - pip install -r requirements.txt
+    - python main.py --repo "$[[ inputs.repo ]]" --language "$[[ inputs.language ]]" --output output --overview-only
+  artifacts:
+    paths:
+      - output
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "web"

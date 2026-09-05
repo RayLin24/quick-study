@@ -1,0 +1,35 @@
+# Official one-click template (feature 28).
+# Usage: copy to a consumer repo, set OPENROUTER_API_KEY (and optional GITHUB_TOKEN) as secrets.
+name: quick-study
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: GitHub repo URL to tutorialize
+        required: true
+        default: https://github.com/octocat/Hello-World
+      language:
+        description: Tutorial language
+        required: false
+        default: Chinese
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: RayLin24/quick-study
+          path: quick-study
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r quick-study/requirements.txt
+      - env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python quick-study/main.py --repo "${{ inputs.repo }}" --language "${{ inputs.language }}" --output output --overview-only
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tutorial
+          path: output

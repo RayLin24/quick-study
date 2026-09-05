@@ -581,6 +581,18 @@ class JobManager:
                 except Exception as exc:
                     job.append_log(f"QUICK_STUDY_WARN: history {exc}")
                 try:
+                    from utils.jsonl_log import emit_run
+
+                    emit_run(
+                        self.output_dir,
+                        "job_done",
+                        status=job.status,
+                        id=job.id,
+                        output_name=job.output_name,
+                    )
+                except Exception:
+                    pass
+                try:
                     from utils.webhook import notify_completion
 
                     notify_completion(job.snapshot())
