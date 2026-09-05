@@ -19,13 +19,14 @@ def load_annotations(folder: Path) -> list[dict]:
     return items if isinstance(items, list) else []
 
 
-def add_annotation(folder: Path, *, filename: str, quote: str, note: str) -> list[dict]:
+def add_annotation(folder: Path, *, filename: str, quote: str, note: str, author: str = "") -> list[dict]:
     items = load_annotations(folder)
     items.append(
         {
             "filename": filename,
             "quote": (quote or "")[:400],
             "note": (note or "")[:800],
+            "author": (author or "local")[:40],
             "ts": int(time.time()),
         }
     )

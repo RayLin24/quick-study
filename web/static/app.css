@@ -856,6 +856,13 @@ body.theme-dark {
 .mermaid-zoom .mermaid {
   transform-origin: top left;
 }
+.stale-banner, .week-path, .continue-card {
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 12px;
+  padding: 12px 16px;
+  margin: 12px 0;
+}
 .learn-box, .next-smart, .quality-banner {
   background: #eff6ff;
   border: 1px solid #bfdbfe;

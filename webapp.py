@@ -29,8 +29,18 @@ from utils.ip_rate_limit import RateLimited, bucket_key, limiter_from_env
 from utils.jsonl_log import emit_run, tail_run
 from utils.key_rotation import detect_key_files
 from utils.otel import span
+from utils.continue_reading import continue_card, load_progress_file, save_progress_file
+from utils.disaster_recovery import backup_output, restore_output
+from utils.entry_files import pick_entry_files
+from utils.exercises import tutorial_exercises
+from utils.mem_guard import suggest_concurrency
+from utils.og_cover import og_image_url
+from utils.presets import dump_preset, list_presets, load_preset, save_preset
+from utils.stale import stale_status
+from utils.test_policy import classify_files, policy_markdown
 from utils.tutorial_search import search_tutorials
 from utils.tutorial_tags import list_groups, set_tags
+from utils.week_path import week_path, week_path_markdown
 from utils.cost_hint import max_abstractions_cost_hint
 from utils.editor_open import resolve_editor_url
 from utils.graph_color import color_mermaid
@@ -144,6 +154,34 @@ class AnnotationIn(BaseModel):
     filename: str = "index.md"
     quote: str = ""
     note: str = ""
+    author: str = ""
+
+
+class PresetIn(BaseModel):
+    name: str = "default"
+    payload: dict = Field(default_factory=dict)
+
+
+class BackupIn(BaseModel):
+    dest: str = ""
+
+
+class RestoreIn(BaseModel):
+    archive: str = ""
+
+
+class ProgressIn(BaseModel):
+    path: str = ""
+    ts: float | None = None
+
+
+class PolicyIn(BaseModel):
+    files: list[str] = Field(default_factory=list)
+    tests_as_chapter: bool = False
+
+
+class EntriesIn(BaseModel):
+    files: list = Field(default_factory=list)
 
 
 class WorkbenchIn(BaseModel):
@@ -317,6 +355,7 @@ def create_app(
                 "include_presets": INCLUDE_PRESETS,
                 "i18n": catalog(lang),
                 "ui_lang": lang,
+                "continue_card": continue_card(output, load_progress_file(output)),
             },
         )
 
@@ -614,6 +653,9 @@ def create_app(
                 "outcomes": learning_outcomes(text, language=str(meta.get("language") or "Chinese")),
                 "next_smart": recommend_next(output / tutorial_name, filename) if filename != "index.md" else {},
                 "quality": score_tutorial(output / tutorial_name) if filename == "index.md" else {},
+                "stale": stale_status(output / tutorial_name),
+                "og_image": og_image_url(meta.get("repo_url")),
+                "week_path": week_path(output / tutorial_name) if filename == "index.md" else {},
                 "i18n": catalog(normalize_ui_lang(request.cookies.get("qs_lang"))),
                 "ui_lang": normalize_ui_lang(request.cookies.get("qs_lang")),
             },
@@ -675,7 +717,15 @@ def create_app(
     @app.post("/api/tutorials/{tutorial_name}/annotations")
     def api_add_annotation(tutorial_name: str, body: AnnotationIn):
         folder = tutorial_folder(output, tutorial_name)
-        return {"items": add_annotation(folder, filename=body.filename, quote=body.quote, note=body.note)}
+        return {
+            "items": add_annotation(
+                folder,
+                filename=body.filename,
+                quote=body.quote,
+                note=body.note,
+                author=body.author or "local",
+            )
+        }
 
     @app.post("/api/tutorials/{tutorial_name}/star")
     def api_star(tutorial_name: str):
@@ -898,6 +948,95 @@ def create_app(
     @app.get("/api/demo")
     def api_demo():
         return demo_payload() if demo_enabled() else {"demo": False}
+
+    @app.get("/api/tutorials/{tutorial_name}/stale")
+    def api_stale(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return stale_status(folder)
+
+    @app.post("/api/entries")
+    def api_entries(body: EntriesIn):
+        return {"items": pick_entry_files(body.files)}
+
+    @app.post("/api/test-policy")
+    def api_test_policy(body: PolicyIn):
+        report = classify_files(body.files, tests_as_chapter=body.tests_as_chapter)
+        report["markdown"] = policy_markdown(report)
+        return report
+
+    @app.get("/v1/tutorials")
+    def v1_tutorials():
+        return {"items": list_tutorials(output)}
+
+    @app.post("/v1/tutorials/{tutorial_name}/ask")
+    def v1_ask(tutorial_name: str, body: AskIn, request: Request):
+        return api_ask(tutorial_name, body, request)
+
+    @app.post("/v1/jobs")
+    def v1_start_job(body: JobIn):
+        return api_start_job(body)
+
+    @app.get("/v1/jobs/current")
+    def v1_current_job(after: int | None = None):
+        return manager.snapshot(after=after)
+
+    @app.get("/api/tutorials/{tutorial_name}/exercises")
+    def api_exercises(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return {"items": tutorial_exercises(folder)}
+
+    @app.get("/api/tutorials/{tutorial_name}/week-path")
+    def api_week_path(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return week_path(folder)
+
+    @app.get("/api/tutorials/{tutorial_name}/week-path.md")
+    def api_week_path_md(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return PlainTextResponse(week_path_markdown(folder))
+
+    @app.get("/api/continue")
+    def api_continue():
+        return continue_card(output, load_progress_file(output)) or {}
+
+    @app.post("/api/continue")
+    def api_save_continue(body: ProgressIn):
+        data = load_progress_file(output)
+        if body.path:
+            data[body.path] = body.ts or __import__("time").time()
+            save_progress_file(output, data)
+        return continue_card(output, data) or {}
+
+    @app.get("/api/presets")
+    def api_list_presets():
+        return {"items": list_presets(output)}
+
+    @app.post("/api/presets")
+    def api_save_preset(body: PresetIn):
+        return save_preset(output, body.name or "default", body.payload or dump_preset({}))
+
+    @app.get("/api/presets/{name}")
+    def api_load_preset(name: str):
+        try:
+            return load_preset(output, name)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="没有这个预设") from exc
+
+    @app.post("/api/ops/backup")
+    def api_backup(body: BackupIn):
+        dest = Path(body.dest) if body.dest else None
+        return backup_output(output, dest)
+
+    @app.post("/api/ops/restore")
+    def api_restore(body: RestoreIn):
+        try:
+            return restore_output(Path(body.archive), output)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/ops/memory")
+    def api_memory(file_count: int = 0):
+        return suggest_concurrency(file_count)
 
     return app
 
