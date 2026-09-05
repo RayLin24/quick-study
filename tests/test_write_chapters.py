@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from nodes import WriteChapters, finalize_chapter
+from nodes import CombineTutorial, WriteChapters, finalize_chapter, inject_truncation_note
 
 
 def _item():
@@ -76,4 +76,40 @@ def test_write_chapters_retries_skip_cache(monkeypatch):
 
     result = asyncio.run(run())
     assert "正文内容" in result
+    assert "qs:truncated_files=" in result
     assert calls == [True, False]
+
+
+def test_combine_mermaid_includes_click_targets():
+    shared = {
+        "project_name": "Demo",
+        "output_dir": "/tmp/out",
+        "repo_url": "https://github.com/o/r",
+        "relationships": {"summary": "sum", "details": [{"from": 0, "to": 1, "label": "uses"}]},
+        "chapter_order": [0, 1],
+        "abstractions": [
+            {"name": "入口", "description": "d", "files": []},
+            {"name": "核心", "description": "d", "files": []},
+        ],
+        "chapters": [
+            "# Chapter 1: 入口\n\n" + ("说明。" * 40),
+            "# Chapter 2: 核心\n\n" + ("说明。" * 40),
+        ],
+        "language": "Chinese",
+        "file_count": 2,
+        "map_mode": False,
+    }
+    prep = CombineTutorial().prep(shared)
+    assert "```mermaid" in prep["index_content"]
+    assert 'click A0 "' in prep["index_content"]
+    assert 'click A1 "' in prep["index_content"]
+    assert "01_" in prep["index_content"]
+
+
+def test_inject_truncation_note_after_heading():
+    body = "# Chapter 1: 入口\n\n" + ("一段说明。" * 40)
+    out = inject_truncation_note(body, {"truncated_files": 2, "file_count": 6})
+    assert out.startswith("# Chapter 1:")
+    assert "<!-- qs:truncated_files=2 total=6 -->" in out
+    assert "引用了 6 个文件" in out
+    assert "2 个因长度限制被截断" in out

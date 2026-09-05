@@ -60,6 +60,32 @@ _print_lock = threading.Lock()
 _legacy_cache = None
 _legacy_loaded = False
 STREAM_FALLBACK_STATUSES = {400, 404, 415, 422}
+_raw_empty_stream_max = os.getenv("LLM_EMPTY_STREAM_MAX", "2").strip()
+empty_stream_max = int(_raw_empty_stream_max) if _raw_empty_stream_max.isdigit() else 2
+_empty_stream_streak = 0
+_empty_stream_lock = threading.Lock()
+
+
+def reset_empty_stream_streak() -> None:
+    global _empty_stream_streak
+    with _empty_stream_lock:
+        _empty_stream_streak = 0
+
+
+def empty_stream_streak() -> int:
+    with _empty_stream_lock:
+        return _empty_stream_streak
+
+
+def _note_empty_stream() -> int:
+    global _empty_stream_streak
+    with _empty_stream_lock:
+        _empty_stream_streak += 1
+        return _empty_stream_streak
+
+
+def _note_good_stream() -> None:
+    reset_empty_stream_streak()
 
 
 class EmptyLLMResponse(Exception):
@@ -361,6 +387,7 @@ def _stream_chat_completion(url, headers, payload, progress: _Progress) -> str:
     text = "".join(parts)
     if not text.strip():
         raise EmptyLLMResponse("Streaming response contained no content")
+    _note_good_stream()
     return text
 
 
@@ -443,9 +470,17 @@ def _call_llm_provider(prompt: str, progress: _Progress, temperature: float = 0.
             try:
                 return _stream_chat_completion(url, headers, payload, progress)
             except EmptyLLMResponse:
+                streak = _note_empty_stream()
                 if not stream_fallback_enabled:
                     raise
-                # Opt-in second billed request — never silent.
+                if streak >= empty_stream_max:
+                    raise EmptyLLMResponse(
+                        format_error(
+                            f"consecutive empty streams ({streak}); "
+                            "stopping fallback to avoid double billing"
+                        )
+                    )
+                # Opt-in second billed request — never silent. Limited by streak.
                 msg = format_error(
                     "empty streaming response; falling back to non-stream (extra LLM request)"
                 )

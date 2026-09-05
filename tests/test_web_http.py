@@ -244,6 +244,62 @@ def test_ask_answers_from_existing_tutorial(tmp_path: Path):
     assert res.json()["answer"] == "from Demo: 是什么"
 
 
+def test_preview_does_not_start_job(tmp_path: Path):
+    src = tmp_path / "code"
+    src.mkdir()
+    (src / "app.py").write_text("print(1)\n", encoding="utf-8")
+    client = TestClient(_app(tmp_path, lambda cmd, on_line, cwd: (_ for _ in ()).throw(AssertionError("preview must not start"))))
+    res = client.post(
+        "/api/jobs/preview",
+        json={
+            "source_type": "dir",
+            "local_dir": str(src),
+            "include": "*.py",
+            "max_abstractions": 4,
+        },
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["dry_run"] is True
+    assert data["file_count"] == 1
+    assert data["estimated_calls"]["total"] == 7
+    snap = client.get("/api/jobs/current").json()
+    assert snap["status"] == "idle"
+
+
+def test_chapter_page_shows_truncation_banners(tmp_path: Path):
+    dest = tmp_path / "output" / "Demo"
+    dest.mkdir(parents=True)
+    (dest / "index.md").write_text("# Demo\n", encoding="utf-8")
+    (dest / "01_one.md").write_text(
+        "# Chapter 1: One\n\n<!-- qs:truncated_files=3 total=5 -->\n\n正文\n",
+        encoding="utf-8",
+    )
+    client = TestClient(_app(tmp_path, lambda cmd, on_line, cwd: 0))
+    page = client.get("/t/Demo/01_one.md")
+    assert page.status_code == 200
+    assert "引用文件截断：3 / 5" in page.text
+    assert page.text.count("引用文件截断：3 / 5") >= 2
+    assert 'id="chapter-nav"' in page.text
+    assert "bindMermaidChapterClicks" in page.text
+
+
+def test_index_mermaid_page_includes_chapter_nav(tmp_path: Path):
+    dest = tmp_path / "output" / "Demo"
+    dest.mkdir(parents=True)
+    (dest / "index.md").write_text(
+        "# Demo\n\n```mermaid\nflowchart TD\n    A0[\"入口\"]\n```\n",
+        encoding="utf-8",
+    )
+    (dest / "01_entry.md").write_text("# Chapter 1: 入口\n\n正文\n", encoding="utf-8")
+    client = TestClient(_app(tmp_path, lambda cmd, on_line, cwd: 0))
+    page = client.get("/t/Demo")
+    assert page.status_code == 200
+    assert 'id="chapter-nav"' in page.text
+    assert "01_entry.md" in page.text
+    assert "入口" in page.text
+
+
 def test_second_job_returns_conflict(tmp_path: Path):
     gate = tmp_path / "gate"
 

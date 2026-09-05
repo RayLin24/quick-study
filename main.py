@@ -5,37 +5,9 @@ import argparse
 import time
 # Import the function that creates the flow
 from flow import create_tutorial_flow
+from utils.patterns import DEFAULT_EXCLUDE_PATTERNS, DEFAULT_INCLUDE_PATTERNS
 
 dotenv.load_dotenv()
-
-# Default file patterns
-DEFAULT_INCLUDE_PATTERNS = {
-    "*.py", "*.js", "*.jsx", "*.ts", "*.tsx", "*.go", "*.java", "*.pyi", "*.pyx",
-    "*.c", "*.cc", "*.cpp", "*.h", "*.md", "*.rst", "*Dockerfile",
-    "*Makefile", "*.yaml", "*.yml",
-}
-
-DEFAULT_EXCLUDE_PATTERNS = {
-    "assets/*", "data/*", "images/*", "public/*", "static/*", "temp/*",
-    "*docs/*",
-    "*venv/*",
-    "*.venv/*",
-    "*test*",
-    "*tests/*",
-    "*examples/*",
-    "v1/*",
-    "*dist/*",
-    "*build/*",
-    "*experimental/*",
-    "*deprecated/*",
-    "*misc/*",
-    "*legacy/*",
-    ".git/*", ".github/*", ".next/*", ".vscode/*",
-    "*obj/*",
-    "*bin/*",
-    "*node_modules/*",
-    "*.log"
-}
 
 # --- Main Function ---
 def main():
@@ -62,6 +34,11 @@ def main():
     parser.add_argument("--no-cache", action="store_true", help="Disable LLM response caching (default: caching enabled)")
     # Add max_abstraction_num parameter to control the number of abstractions
     parser.add_argument("--max-abstractions", type=int, default=10, help="Maximum number of abstractions to identify (default: 10)")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="只爬不写：打印文件数与估 LLM 调用后退出，不生成教程。",
+    )
 
     args = parser.parse_args()
 
@@ -108,6 +85,13 @@ def main():
         "chapters": [],
         "final_output_dir": None
     }
+
+    if args.dry_run:
+        from utils.preview import format_preview_report, preview_generation
+
+        preview = preview_generation(shared)
+        print(format_preview_report(preview))
+        raise SystemExit(0 if preview.get("ok") else 2)
 
     # Display starting message with repository/directory and language
     print(f"Starting tutorial generation for: {args.repo or args.dir} in {args.language.capitalize()} language")

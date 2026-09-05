@@ -28,18 +28,31 @@ def is_loopback_host(host: str) -> bool:
     return False
 
 
+PUBLIC_BIND_BANNER = """
+================================================================================
+拒绝启动：非回环地址未设置访问令牌
+================================================================================
+绑定 {host} 会把本机 Web（含 LLM 调用）暴露到公网。
+未设置 QUICK_STUDY_TOKEN 时禁止 0.0.0.0 / 局域网 / 公网裸挂。
+
+请任选其一：
+  1) 本机访问：改用 --host 127.0.0.1
+  2) 需要局域网/公网：先设置环境变量 QUICK_STUDY_TOKEN（强随机口令）
+================================================================================
+""".strip()
+
+
+def public_bind_message(host: str) -> str:
+    return format_error(PUBLIC_BIND_BANNER.format(host=host))
+
+
 def assert_safe_bind(host: str, token: str | None = None) -> None:
     """Refuse to start on a public/non-loopback bind unless a token is set."""
     if is_loopback_host(host):
         return
     resolved = token if token is not None else os.getenv("QUICK_STUDY_TOKEN")
     if not (resolved or "").strip():
-        raise BindRefused(
-            format_error(
-                f"Refusing to bind {host}: non-loopback listen requires QUICK_STUDY_TOKEN. "
-                "Use --host 127.0.0.1 or set QUICK_STUDY_TOKEN."
-            )
-        )
+        raise BindRefused(public_bind_message(host))
 
 
 def detect_uvicorn_host() -> str | None:

@@ -119,6 +119,13 @@ def build_code_context(
 
 
 def clip_snippets(content_map, *, max_total_chars=None, max_file_chars=None):
+    text, _stats = clip_snippets_with_stats(
+        content_map, max_total_chars=max_total_chars, max_file_chars=max_file_chars
+    )
+    return text
+
+
+def clip_snippets_with_stats(content_map, *, max_total_chars=None, max_file_chars=None):
     if max_total_chars is None or max_file_chars is None:
         default_total, default_file = _context_limits()
         if max_total_chars is None:
@@ -127,15 +134,58 @@ def clip_snippets(content_map, *, max_total_chars=None, max_file_chars=None):
             max_file_chars = default_file
     parts = []
     used = 0
-    for idx_path, content in content_map.items():
-        body = (content or "")[:max_file_chars]
+    included = 0
+    truncated_files = 0
+    items = list((content_map or {}).items())
+    for idx_path, content in items:
+        raw = content or ""
+        cut = len(raw) > max_file_chars
+        body = raw[:max_file_chars]
         label = idx_path.split("# ", 1)[1] if "# " in idx_path else idx_path
         piece = f"--- File: {label} ---\n# source: {label}\n{body}\n\n"
         if used + len(piece) > max_total_chars:
+            truncated_files += len(items) - included
             break
         parts.append(piece)
         used += len(piece)
-    return "".join(parts).rstrip()
+        included += 1
+        if cut:
+            truncated_files += 1
+    omitted = max(0, len(items) - included)
+    stats = {
+        "file_count": len(items),
+        "files_used": included,
+        "truncated_files": truncated_files,
+        "omitted_files": omitted,
+    }
+    return "".join(parts).rstrip(), stats
+
+
+TRUNCATION_MARKER_RE = re.compile(r"<!--\s*qs:truncated_files=(\d+)\s+total=(\d+)\s*-->")
+
+
+def inject_truncation_note(text: str, stats: dict) -> str:
+    """Record how many cited files were clipped so the reading page can show it."""
+    n = int((stats or {}).get("truncated_files") or 0)
+    total = int((stats or {}).get("file_count") or 0)
+    marker = f"<!-- qs:truncated_files={n} total={total} -->"
+    note = f"> **引用截断：** 本章引用了 {total} 个文件，其中 {n} 个因长度限制被截断。"
+    body = (text or "").lstrip()
+    if TRUNCATION_MARKER_RE.search(body):
+        body = TRUNCATION_MARKER_RE.sub(marker, body, count=1)
+        return body
+    lines = body.split("\n", 1)
+    if lines and lines[0].startswith("#"):
+        rest = lines[1] if len(lines) > 1 else ""
+        return f"{lines[0]}\n\n{marker}\n\n{note}\n{rest}"
+    return f"{marker}\n\n{note}\n\n{body}"
+
+
+def parse_truncation_note(text: str) -> dict | None:
+    match = TRUNCATION_MARKER_RE.search(text or "")
+    if not match:
+        return None
+    return {"truncated": int(match.group(1)), "total": int(match.group(2))}
 
 
 def finalize_chapter(chapter_content, chapter_num, abstraction_name):
@@ -250,6 +300,9 @@ class FetchRepo(Node):
     def post(self, shared, prep_res, exec_res):
         shared["files"] = exec_res
         shared["file_count"] = len(exec_res)
+        project_name = shared.get("project_name")
+        if project_name:
+            print(f"QUICK_STUDY_OUTPUT: {project_name}")
 
 
 class IdentifyAbstractions(Node):
@@ -848,7 +901,7 @@ class WriteChapters(AsyncParallelBatchNode):
         language = item.get("language", "english")
         use_cache = item.get("use_cache", True) # Read use_cache from item
 
-        file_context_str = clip_snippets(item["related_files_content_map"])
+        file_context_str, clip_stats = clip_snippets_with_stats(item["related_files_content_map"])
 
         # Add language instruction and context notes only if not English
         language_instruction = ""
@@ -941,7 +994,8 @@ Now, directly provide a super beginner-friendly Markdown output (DON'T need ```m
                 f"ch {chapter_num}/{len(item['chapter_filenames'])}",
             )
 
-        return finalize_chapter(chapter_content, chapter_num, abstraction_name)
+        text = finalize_chapter(chapter_content, chapter_num, abstraction_name)
+        return inject_truncation_note(text, clip_stats)
 
     async def post_async(self, shared, prep_res, exec_res_list):
         # asyncio.gather preserves input order, so exec_res_list still follows chapter_order
@@ -995,9 +1049,6 @@ class CombineTutorial(Node):
                 f'    {from_node_id} -- "{edge_label}" --> {to_node_id}'
             )  # Edge label uses potentially translated label
 
-        mermaid_diagram = "\n".join(mermaid_lines)
-        # --- End Mermaid ---
-
         # --- Prepare index.md content ---
         index_content = f"# Tutorial: {project_name}\n\n"
         index_content += f"{relationships_data['summary']}\n\n"  # Use the potentially translated summary directly
@@ -1011,15 +1062,11 @@ class CombineTutorial(Node):
                 f", map_mode={'true' if map_mode else 'false'}\n\n"
             )
 
-        # Add Mermaid diagram for relationships (diagram itself uses potentially translated names/labels)
-        index_content += "```mermaid\n"
-        index_content += mermaid_diagram + "\n"
-        index_content += "```\n\n"
-
         # Keep fixed strings in English
         index_content += f"## Chapters\n\n"
 
         chapter_files = []
+        click_lines = []
         # Generate chapter links based on the determined order, using potentially translated names
         for i, abstraction_index in enumerate(chapter_order):
             # Ensure index is valid and we have content for it
@@ -1032,6 +1079,7 @@ class CombineTutorial(Node):
                     c if c.isalnum() else "_" for c in abstraction_name
                 ).lower()
                 filename = f"{i+1:02d}_{safe_name}.md"
+                click_lines.append(f'    click A{abstraction_index} "{filename}"')
                 index_content += f"{i+1}. [{abstraction_name}]({filename})\n"  # Use potentially translated name in link text
 
                 # Add attribution to chapter content (using English fixed string)
@@ -1047,6 +1095,15 @@ class CombineTutorial(Node):
                 print(
                     f"Warning: Mismatch between chapter order, abstractions, or content at index {i} (abstraction index {abstraction_index}). Skipping file generation for this entry."
                 )
+
+        mermaid_diagram = "\n".join(mermaid_lines + click_lines)
+        # Insert the diagram above the chapter list.
+        diagram_block = "```mermaid\n" + mermaid_diagram + "\n```\n\n"
+        marker = "## Chapters\n\n"
+        if marker in index_content:
+            index_content = index_content.replace(marker, diagram_block + marker, 1)
+        else:
+            index_content = diagram_block + index_content
 
         # Add attribution to index content (using English fixed string)
         index_content += f"\n\n---\n\nGenerated by [AI Codebase Knowledge Builder](https://github.com/The-Pocket/Tutorial-Codebase-Knowledge)"

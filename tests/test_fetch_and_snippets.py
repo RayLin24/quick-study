@@ -1,6 +1,6 @@
 import pytest
 
-from nodes import FetchRepo, clip_snippets
+from nodes import FetchRepo, clip_snippets, clip_snippets_with_stats
 
 
 def test_clip_snippets_includes_source_path():
@@ -8,6 +8,17 @@ def test_clip_snippets_includes_source_path():
     assert "--- File: pkg/mod.py ---" in text
     assert "# source: pkg/mod.py" in text
     assert "print(1)" in text
+
+
+def test_clip_snippets_reports_truncation_stats():
+    text, stats = clip_snippets_with_stats(
+        {"big.py": "x" * 200, "kept.py": "ok"},
+        max_total_chars=80,
+        max_file_chars=20,
+    )
+    assert stats["file_count"] == 2
+    assert stats["truncated_files"] >= 1
+    assert "big.py" in text or stats["omitted_files"] >= 1
 
 
 def test_fetch_repo_refuses_over_threshold(monkeypatch):

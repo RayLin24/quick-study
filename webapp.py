@@ -13,8 +13,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from utils.ask_tutorial import AskRefused, ask_tutorial
+from utils.ask_tutorial import AskRefused, AskResult, ask_tutorial_detailed
 from utils.errors import format_error
+from utils.preview import PreviewError, preview_generation
 from web.bind import (
     BindRefused,
     assert_safe_bind,
@@ -22,13 +23,14 @@ from web.bind import (
     is_loopback_host,
     token_from_headers,
 )
-from web.job import JobBusyError, JobManager, subprocess_runner
+from web.job import JobBusyError, JobManager, subprocess_runner, validate_start_request
 from web.render import (
     add_h2_ids,
     chapter_label,
     first_heading,
     list_tutorials,
     markdown_to_html,
+    parse_truncation_note,
     resolve_tutorial_file,
 )
 
@@ -39,8 +41,12 @@ LOGIN_HTML = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>Quick Study 登录</title>
 <link rel="stylesheet" href="/static/app.css"></head>
 <body><main class="layout"><section class="panel">
+<div class="bind-warn" role="alert">
+<strong>公网 / 局域网绑定必须带令牌</strong>
+<p>未设置 <code>QUICK_STUDY_TOKEN</code> 时，非 127.0.0.1 绑定会拒绝启动，防止未授权的 LLM 调用。</p>
+</div>
 <h1>需要访问令牌</h1>
-<p>非本机回环绑定必须设置 <code>QUICK_STUDY_TOKEN</code>。</p>
+<p>请输入环境变量 <code>QUICK_STUDY_TOKEN</code> 的值。</p>
 <form method="post" action="/login">
 <label class="field"><span>令牌</span>
 <input type="password" name="token" autocomplete="off"></label>
@@ -100,7 +106,7 @@ def create_app(
     app.state.manager = manager
     app.state.output_dir = output
     app.state.require_auth = False
-    app.state.ask_fn = ask_fn or ask_tutorial
+    app.state.ask_fn = ask_fn or ask_tutorial_detailed
 
     static_dir = WEB_DIR / "static"
     static_dir.mkdir(parents=True, exist_ok=True)
@@ -165,12 +171,34 @@ def create_app(
             ) from exc
         folder = output / tutorial_name
         try:
-            answer = app.state.ask_fn(folder, body.question)
+            raw = app.state.ask_fn(folder, body.question)
         except AskRefused as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             raise HTTPException(status_code=400, detail=format_error(exc)) from exc
-        return {"answer": answer}
+        if isinstance(raw, AskResult):
+            return {
+                "answer": raw.answer,
+                "used_chapters": raw.used_chapters,
+                "routed": raw.routed,
+            }
+        if isinstance(raw, dict) and "answer" in raw:
+            return {
+                "answer": raw["answer"],
+                "used_chapters": raw.get("used_chapters") or [],
+                "routed": bool(raw.get("routed")),
+            }
+        return {"answer": raw, "used_chapters": [], "routed": False}
+
+    @app.post("/api/jobs/preview")
+    def api_preview_job(body: JobIn):
+        try:
+            data = validate_start_request(body.model_dump())
+            return preview_generation(data)
+        except PreviewError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/jobs/current")
     def api_current_job(after: int | None = None):
@@ -244,6 +272,7 @@ def create_app(
         title = chapter_label(filename, heading) if filename != "index.md" else (heading or tutorial_name)
         chapters = _chapter_links(output, tutorial_name)
         prev_chapter, next_chapter = _neighbors(chapters, filename)
+        truncation = parse_truncation_note(text)
         body = markdown_to_html(
             text,
             tutorial_name,
@@ -262,6 +291,7 @@ def create_app(
                 "chapters": chapters,
                 "prev_chapter": prev_chapter,
                 "next_chapter": next_chapter,
+                "truncation": truncation,
             },
         )
 
