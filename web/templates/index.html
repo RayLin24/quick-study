@@ -94,6 +94,22 @@
           <input type="checkbox" id="incremental" name="incremental">
           增量再生成
         </label>
+        <label class="choice">
+          <input type="checkbox" id="bilingual" name="bilingual">
+          双语小标题
+        </label>
+        <label class="choice">
+          <input type="checkbox" id="pagerank_order" name="pagerank_order">
+          PageRank 排章
+        </label>
+        <label class="choice">
+          <input type="checkbox" id="auto-open">
+          成功后自动打开教程
+        </label>
+        <label class="field">
+          <span>学习目标（可选）</span>
+          <input id="learning_goal" name="learning_goal" type="text" placeholder="例如：能改入口中间件" autocomplete="off">
+        </label>
 
         <label class="field">
           <span>排除文件（exclude）</span>
@@ -112,7 +128,25 @@
           <button type="submit" id="submit-btn">确认生成</button>
           <button type="button" id="replace-btn">取消并开始</button>
           <button type="button" id="cancel-btn" hidden>取消任务</button>
+          <button type="button" id="smoke-btn">空状态试跑公开仓</button>
         </div>
+        <details id="pat-wizard" class="pat-wizard">
+          <summary>私有仓 PAT 向导</summary>
+          <ol id="pat-steps">
+            <li>GitHub Settings → Developer settings → Fine-grained token</li>
+            <li>Contents: Read，写入 <code>GITHUB_TOKEN</code> 环境变量</li>
+            <li>不要把 token 放到命令行</li>
+          </ol>
+          <label class="field"><span>检查令牌格式（不会保存）</span>
+            <input id="pat-input" type="password" autocomplete="off">
+          </label>
+          <button type="button" id="pat-check">检查格式</button>
+          <p id="pat-hint" class="ask-hint"></p>
+        </details>
+        <label class="field">
+          <span>上传 ZIP 生成本地教程</span>
+          <input id="zip-upload" type="file" accept=".zip">
+        </label>
       </form>
     </section>
 
@@ -124,12 +158,12 @@
           <span class="step-bar-fill" id="step-bar-fill"></span>
         </div>
         <ol class="step-list" id="step-list">
-          <li data-step="fetch">拉取</li>
-          <li data-step="identify">识别</li>
-          <li data-step="relationships">关系</li>
-          <li data-step="order">排序</li>
-          <li data-step="write">写章</li>
-          <li data-step="combine">汇总</li>
+          <li data-step="fetch">Fetch 拉取</li>
+          <li data-step="identify">Identify 识别</li>
+          <li data-step="relationships">Relationships 关系</li>
+          <li data-step="order">Order 排序</li>
+          <li data-step="write">Write 写章</li>
+          <li data-step="combine">Combine 汇总</li>
         </ol>
       </div>
       <pre id="log" class="log" tabindex="0" aria-live="polite"></pre>
@@ -148,7 +182,7 @@
         </a>
       </li>
       {% else %}
-      <li class="empty">还没有教程。生成完成后会出现在这里。</li>
+      <li class="empty">还没有教程。可点「空状态试跑公开仓」预填 octocat/Hello-World。</li>
       {% endfor %}
     </ul>
   </section>

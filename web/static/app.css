@@ -778,6 +778,64 @@ button:disabled {
   }
 }
 
+body.theme-dark {
+  --color-background: #0f172a;
+  --color-foreground: #e2e8f0;
+  --color-panel: #1e293b;
+  --color-muted: #334155;
+  --color-border: #334155;
+}
+
+.toc-drawer-btn {
+  display: none;
+}
+
+@media (max-width: 800px) {
+  .toc-drawer-btn {
+    display: inline-flex;
+  }
+  #toc-drawer {
+    display: none;
+  }
+  #toc-drawer.is-open {
+    display: block;
+    position: fixed;
+    inset: 56px 12px auto;
+    z-index: 8;
+    background: var(--color-panel);
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    max-height: 70vh;
+    overflow: auto;
+  }
+}
+
+@media print {
+  header.top,
+  .ask-box,
+  .reader-tools,
+  .export-nav,
+  .toc-drawer-btn {
+    display: none !important;
+  }
+  .reader {
+    display: block;
+  }
+  body {
+    background: #fff;
+    color: #000;
+  }
+}
+
+.source-symbol {
+  text-decoration: underline dotted;
+}
+
+#copy-error,
+#cost-hint {
+  margin-top: 8px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   button,
   .cards a,

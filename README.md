@@ -137,6 +137,17 @@ This is a tutorial project of [Pocket Flow](https://github.com/The-Pocket/Pocket
     - `--language` - Language for the generated tutorial (default: "english")
     - `--max-abstractions` - Maximum number of abstractions to identify (default: 10)
     - `--no-cache` - Disable LLM response caching (default: caching enabled)
+    - `--dry-run` / `--resume` / `--incremental` / `--overview-only` / `--polish` / `--strategy`
+    - `python main.py ask <tutorial> "question"` — ask a generated tutorial
+
+  Web Docker (token required; binds 127.0.0.1 only):
+
+  ```bash
+  docker compose build
+  QUICK_STUDY_TOKEN=change-me docker compose up
+  ```
+
+  Mermaid is pinned at **11.4.1** in `web/static/vendor/mermaid.min.js` (see `docs/mermaid-version.md`). Read-only MCP tools: `python mcp_server.py --list`.
 
 The application will crawl the repository, analyze the codebase structure, generate tutorial content in the specified language, and save the output in the specified directory (default: ./output).
 

@@ -46,6 +46,13 @@ def main():
     parser.add_argument("--overview-only", action="store_true", help="轻量总览：只出总览与关系，不写长章。")
     parser.add_argument("--polish", action="store_true", help="可选：串行补相邻章过渡（默认关）。")
     parser.add_argument("--strategy", choices=["beginner", "deep", "skim"], help="新手/深度/速览预设。")
+    parser.add_argument("--learning-goal", default="", help="学习目标，约束 Identify 选抽象。")
+    parser.add_argument("--seed", nargs="+", help="强调阅读的种子文件路径。")
+    parser.add_argument("--bilingual", action="store_true", help="章内加另一语言小标题。")
+    parser.add_argument("--pagerank-order", action="store_true", help="用入度/PageRank 排章，跳过 LLM 排序。")
+    parser.add_argument("--pr-diff", help="PR diff 文件，生成导读提示后退出。")
+    parser.add_argument("--issue-title", default="", help="Issue 标题（配合 --issue-body）。")
+    parser.add_argument("--issue-body", default="", help="Issue 正文，生成讨论导读后退出。")
 
     args = parser.parse_args()
     if args.strategy:
@@ -100,6 +107,10 @@ def main():
         "overview_only": bool(args.overview_only),
         "polish": bool(args.polish),
         "strategy": args.strategy,
+        "learning_goal": args.learning_goal,
+        "seed_files": args.seed,
+        "bilingual": bool(args.bilingual),
+        "pagerank_order": bool(args.pagerank_order),
         
         # Add use_cache flag (inverse of no-cache flag)
         "use_cache": not args.no_cache,
@@ -115,6 +126,18 @@ def main():
         "chapters": [],
         "final_output_dir": None
     }
+
+    if args.pr_diff:
+        from pathlib import Path as _P
+        from utils.pr_guide import build_pr_guide_prompt
+
+        print(build_pr_guide_prompt(_P(args.pr_diff).read_text(encoding="utf-8", errors="replace")))
+        raise SystemExit(0)
+    if args.issue_title or args.issue_body:
+        from utils.issue_guide import build_issue_guide_prompt
+
+        print(build_issue_guide_prompt(args.issue_title, args.issue_body))
+        raise SystemExit(0)
 
     if args.dry_run:
         from utils.preview import format_preview_report, preview_generation
@@ -141,4 +164,10 @@ def main():
         pass
 
 if __name__ == "__main__":
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "ask":
+        from utils.ask_cli import main_ask
+
+        raise SystemExit(main_ask(sys.argv[2:]))
     main()

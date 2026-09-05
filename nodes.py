@@ -253,27 +253,49 @@ class FetchRepo(Node):
     def exec(self, prep_res):
         emit_step("fetch")
         from utils.crawl_cache import load_crawl_cache, save_crawl_cache
+        from utils.crawl_progress import crawl_progress
+        from utils.gitlab_gitea import classify_repo_url
 
         cached = load_crawl_cache(prep_res)
         if cached:
-            print(f"Reusing dry-run crawl cache ({len(cached)} files).")
+            print(crawl_progress("cache", count=len(cached)))
             files_list = cached
         else:
             if prep_res["repo_url"]:
-                print(f"Crawling repository: {prep_res['repo_url']}...")
-                try:
-                    result = crawl_github_files(
-                        repo_url=prep_res["repo_url"],
-                        token=prep_res["token"],
+                print(crawl_progress("start", path=prep_res["repo_url"]))
+                kind = classify_repo_url(prep_res["repo_url"]) or "github"
+                if kind in {"gitlab", "gitea"}:
+                    import tempfile
+
+                    from utils.disk_warn import temp_clone_warning
+                    from utils.gitlab_gitea import clone_http_repo
+
+                    warn = temp_clone_warning()
+                    if warn:
+                        print(f"QUICK_STUDY_WARN: {warn}")
+                    tmp = tempfile.mkdtemp(prefix="qs-clone-")
+                    local = clone_http_repo(prep_res["repo_url"], tmp, token=prep_res.get("token"))
+                    result = crawl_local_files(
+                        directory=str(local),
                         include_patterns=prep_res["include_patterns"],
                         exclude_patterns=prep_res["exclude_patterns"],
                         max_file_size=prep_res["max_file_size"],
-                        use_relative_paths=prep_res["use_relative_paths"],
+                        use_relative_paths=True,
                     )
-                except GitHubCrawlError as exc:
-                    raise ValueError(format_error(exc)) from exc
+                else:
+                    try:
+                        result = crawl_github_files(
+                            repo_url=prep_res["repo_url"],
+                            token=prep_res["token"],
+                            include_patterns=prep_res["include_patterns"],
+                            exclude_patterns=prep_res["exclude_patterns"],
+                            max_file_size=prep_res["max_file_size"],
+                            use_relative_paths=prep_res["use_relative_paths"],
+                        )
+                    except GitHubCrawlError as exc:
+                        raise ValueError(format_error(exc)) from exc
             else:
-                print(f"Crawling directory: {prep_res['local_dir']}...")
+                print(crawl_progress("start", path=prep_res["local_dir"]))
                 result = crawl_local_files(
                     directory=prep_res["local_dir"],
                     include_patterns=prep_res["include_patterns"],
@@ -302,6 +324,7 @@ class FetchRepo(Node):
                     f"Suggested include: {suggestion}"
                 )
             )
+        print(crawl_progress("done", count=len(files_list)))
         print(f"Fetched {len(files_list)} files.")
         print(f"QUICK_STUDY_STATS: file_count={len(files_list)} map_mode=pending")
         return files_list
@@ -337,6 +360,11 @@ class IdentifyAbstractions(Node):
             file_listing_for_prompt = "\n".join(
                 [f"- {idx} # {path}" for idx, path in file_info]
             )
+        from utils.learning_goal import learning_goal_block
+        from utils.seed_files import seed_prompt_block
+
+        self._learning_goal_block = learning_goal_block(shared.get("learning_goal"))
+        self._seed_block = seed_prompt_block(shared.get("seed_files"))
         return (
             context,
             file_listing_for_prompt,
@@ -366,6 +394,11 @@ class IdentifyAbstractions(Node):
         language_instruction = ""
         name_lang_hint = ""
         desc_lang_hint = ""
+        extra_constraints = ""
+        if getattr(self, "_learning_goal_block", ""):
+            extra_constraints += self._learning_goal_block
+        if getattr(self, "_seed_block", ""):
+            extra_constraints += self._seed_block
         if language.lower() != "english":
             language_instruction = f"IMPORTANT: Generate the `name` and `description` for each abstraction in **{language.capitalize()}** language. Do NOT use English for these fields.\n\n"
             # Keep specific hints here as name/description are primary targets
@@ -378,7 +411,7 @@ For the project `{project_name}`:
 Codebase Context:
 {context}
 
-{language_instruction}Analyze the codebase context.
+{language_instruction}{extra_constraints}Analyze the codebase context.
 Identify the top 5-{max_abstraction_num} core most important abstractions to help those new to the codebase.
 {"The context is a repo map (paths and symbols, not full source). Do not treat every adapter, plugin, or package as its own abstraction." if map_mode else ""}
 
@@ -416,7 +449,9 @@ Format the output as a YAML list of dictionaries:
             stage="identify",
         )
 
-        abstractions = parse_llm_yaml(response)
+        from utils.identify_parse import parse_llm_structured
+
+        abstractions = parse_llm_structured(response)
 
         if not isinstance(abstractions, list):
             raise ValueError("LLM Output is not a list")
@@ -691,6 +726,8 @@ class OrderChapters(Node):
         if language.lower() != "english":
             list_lang_note = f" (Names might be in {language.capitalize()})"
 
+        self._pagerank = bool(shared.get("pagerank_order"))
+        self._edges = (relationships or {}).get("details") or []
         return (
             abstraction_listing,
             context,
@@ -710,6 +747,11 @@ class OrderChapters(Node):
             use_cache,
         ) = prep_res  # Unpack use_cache
         emit_step("order")
+        if getattr(self, "_pagerank", False):
+            from utils.pagerank_order import pagerank_order
+
+            print("Determining chapter order using in-degree/PageRank...")
+            return pagerank_order(num_abstractions, getattr(self, "_edges", []) or [])
         print("Determining chapter order using LLM...")
         # No language variation needed here in prompt instructions, just ordering based on structure
         # The input names might be translated, hence the note.
@@ -907,6 +949,7 @@ class WriteChapters(AsyncParallelBatchNode):
                         "filename": chapter_filenames[abstraction_index]["filename"],
                         "overview_only": overview_only,
                         "map_mode": map_mode,
+                        "bilingual": bool(shared.get("bilingual")),
                         "output_folder": str(output_folder) if output_folder else None,
                         "saved_chapter": None,
                     }
@@ -994,6 +1037,11 @@ class WriteChapters(AsyncParallelBatchNode):
                 f" (Use the {lang_cap} chapter title from the structure above)"
             )
             tone_note = f" (appropriate for {lang_cap} readers)"
+        bilingual_note = ""
+        if item.get("bilingual"):
+            from utils.bilingual import bilingual_note as _bn
+
+            bilingual_note = _bn(language)
 
         prompt = f"""
 {language_instruction}Write a very beginner-friendly tutorial chapter (in Markdown format) for the project `{project_name}` about the concept: "{abstraction_name}". This is Chapter {chapter_num}.
@@ -1046,6 +1094,7 @@ Instructions for the chapter (Generate content in {language.capitalize()} unless
 - Ensure the tone is welcoming and easy for a newcomer to understand{tone_note}.
 
 - Output *only* the Markdown content for this chapter.
+{bilingual_note}
 
 Now, directly provide a super beginner-friendly Markdown output (DON'T need ```markdown``` tags):
 """
@@ -1053,22 +1102,32 @@ Now, directly provide a super beginner-friendly Markdown output (DON'T need ```m
         self._attempts[chapter_num] = attempt + 1
         use_cache_now = bool(use_cache) and attempt == 0
 
+        from utils.rpm_limit import chapter_limiter
+
+        limiter = getattr(self, "_rpm", None)
+        if limiter is None:
+            limiter = chapter_limiter()
+            self._rpm = limiter
         async with self._semaphore:
             print(f"Writing chapter {chapter_num} for: {abstraction_name} using LLM...")
             def _write_call():
+                limiter.acquire()
                 try:
-                    return call_llm(
-                        prompt,
-                        use_cache_now,
-                        f"ch {chapter_num}/{len(item['chapter_filenames'])}",
-                        stage="write",
-                    )
-                except TypeError:
-                    return call_llm(
-                        prompt,
-                        use_cache_now,
-                        f"ch {chapter_num}/{len(item['chapter_filenames'])}",
-                    )
+                    try:
+                        return call_llm(
+                            prompt,
+                            use_cache_now,
+                            f"ch {chapter_num}/{len(item['chapter_filenames'])}",
+                            stage="write",
+                        )
+                    except TypeError:
+                        return call_llm(
+                            prompt,
+                            use_cache_now,
+                            f"ch {chapter_num}/{len(item['chapter_filenames'])}",
+                        )
+                finally:
+                    limiter.release()
 
             chapter_content = await asyncio.to_thread(_write_call)
 
@@ -1215,6 +1274,10 @@ class CombineTutorial(Node):
             "exclude_patterns": sorted(shared.get("exclude_patterns") or []),
             "max_file_size": shared.get("max_file_size"),
             "relationship_warnings": shared.get("relationship_warnings"),
+            "abstractions": shared.get("abstractions") or [],
+            "files": shared.get("files") or [],
+            "relationships": shared.get("relationships") or {},
+            "strategy": shared.get("strategy"),
         }
 
     def exec(self, prep_res):
@@ -1262,11 +1325,34 @@ class CombineTutorial(Node):
             "include_hash": hashlib.sha256(include_material.encode("utf-8")).hexdigest()[:12],
             "dead_links": dead,
             "relationship_warnings": prep_res.get("relationship_warnings"),
+            "chapter_count": len(chapter_files),
+            "strategy": prep_res.get("strategy"),
         }
         meta_path = os.path.join(output_path, "meta.json")
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
         print(f"  - Wrote {meta_path}")
+
+        from pathlib import Path as _P
+        from utils.abstraction_map import write_abstraction_map
+        from utils.glossary import build_glossary
+        from utils.heatmap import heatmap_markdown
+        from utils.timeout_hint import job_timeout_hint
+        from utils.versions import snapshot_tutorial
+
+        write_abstraction_map(
+            _P(output_path),
+            prep_res.get("abstractions") or [],
+            prep_res.get("files") or [],
+        )
+        names = [item.get("name") or "" for item in (prep_res.get("abstractions") or [])]
+        edges = ((prep_res.get("relationships") or {}).get("details") or [])
+        (_P(output_path) / "glossary.md").write_text(build_glossary(_P(output_path)), encoding="utf-8")
+        (_P(output_path) / "heatmap.md").write_text(heatmap_markdown(names, edges), encoding="utf-8")
+        stamp = snapshot_tutorial(_P(output_path))
+        print(f"  - version snapshot {stamp}")
+        hint = job_timeout_hint(len(chapter_files))
+        print(f"QUICK_STUDY_TIMEOUT_HINT: {hint['hint']}")
 
         return output_path  # Return the final path
 

@@ -19,11 +19,21 @@
     <nav class="export-nav" aria-label="导出">
       <a href="/api/tutorials/{{ tutorial_name }}/llms.txt">llms.txt</a>
       <a href="/api/tutorials/{{ tutorial_name }}/export.zip">zip</a>
+      <a href="/api/tutorials/{{ tutorial_name }}/offline.html">离线 HTML</a>
+      <a href="/api/tutorials/{{ tutorial_name }}/glossary">术语表</a>
+      <a href="/api/tutorials/{{ tutorial_name }}/heatmap">热力图</a>
+      <a href="/embed/{{ tutorial_name }}">embed</a>
+      {% if deepwiki %}<a href="{{ deepwiki }}" rel="noopener" target="_blank">DeepWiki</a>{% endif %}
+      <button type="button" id="theme-toggle">深色阅读</button>
+      <button type="button" id="toc-drawer-btn" class="toc-drawer-btn">目录</button>
+      <button type="button" id="star-btn">收藏</button>
+      <button type="button" id="tts-btn">朗读</button>
+      <button type="button" id="mermaid-export-btn">导出图</button>
     </nav>
   </header>
 
   <div class="reader">
-    <aside>
+    <aside id="toc-drawer">
       <h2>学习路线</h2>
       <ol>
         {% for chapter in chapters %}
@@ -79,6 +89,11 @@
           <span>问题</span>
           <textarea id="ask-question" rows="3" placeholder="这篇教程里入口在哪里？"></textarea>
         </label>
+        <label class="choice">
+          <input type="checkbox" id="ask-thread">
+          多轮对话
+        </label>
+        <p id="ask-countdown" class="ask-hint" data-timeout="{{ llm_timeout }}">Ask 超时对照 LLM_TIMEOUT={{ llm_timeout }}s</p>
         <button type="button" id="ask-btn">提问</button>
         <p id="ask-error" class="error" hidden></p>
         <div id="ask-answer" class="ask-answer" hidden></div>
@@ -91,8 +106,21 @@
   </div>
 
   <script id="chapter-nav" type="application/json">{{ chapters | tojson }}</script>
+  <section class="reader-tools" aria-label="阅读工具">
+    <label class="field">
+      <span>页内批注</span>
+      <textarea id="annotation-note" rows="2" placeholder="选中正文后写下备注"></textarea>
+    </label>
+    <button type="button" id="annotation-save">保存批注</button>
+    <ul id="annotation-list"></ul>
+    <div id="quiz-box" hidden>
+      <h2>本章小测</h2>
+      <ol id="quiz-list"></ol>
+    </div>
+  </section>
   <script src="/static/vendor/highlight.min.js"></script>
   <script src="/static/vendor/mermaid.min.js"></script>
+  <script src="/static/reader.js"></script>
   <script>
     hljs.highlightAll();
     function bindMermaidChapterClicks() {
@@ -174,7 +202,10 @@
           const res = await fetch("/api/tutorials/{{ tutorial_name }}/ask", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ question: askQ.value }),
+            body: JSON.stringify({
+              question: askQ.value,
+              thread: !!(document.getElementById("ask-thread") && document.getElementById("ask-thread").checked),
+            }),
           });
           const data = await res.json();
           if (!res.ok) {

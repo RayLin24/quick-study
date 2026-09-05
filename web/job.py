@@ -14,6 +14,7 @@ from typing import Callable, Optional
 
 from utils.allow_dir import assert_allowed_local_dir
 from utils.errors import format_error
+from utils.gitlab_gitea import classify_repo_url
 from utils.language import DEFAULT_LANGUAGE, normalize_language
 from utils.partial import expected_output_name, isolate_cancelled_output
 from utils.redact import looks_like_secret_key, redact_lines, redact_text
@@ -113,14 +114,19 @@ def validate_start_request(payload: dict) -> dict:
         "polish": bool(payload.get("polish")),
         "replace": bool(payload.get("replace")),
         "strategy": str(payload.get("strategy") or "").strip() or None,
+        "learning_goal": str(payload.get("learning_goal") or "").strip() or None,
+        "bilingual": bool(payload.get("bilingual")),
+        "pagerank_order": bool(payload.get("pagerank_order")),
+        "seed_files": payload.get("seed_files") or None,
     }
 
     if source_type == "repo":
         repo_url = str(payload.get("repo_url") or "").strip()
-        if not GITHUB_REPO_RE.match(repo_url):
+        kind = classify_repo_url(repo_url)
+        if not kind and not GITHUB_REPO_RE.match(repo_url):
             raise ValueError(
-                "请填写有效的 GitHub 仓库 URL，例如 https://github.com/owner/repo "
-                "或 https://github.com/owner/repo/tree/branch/path"
+                "请填写有效的 GitHub / GitLab / Gitea 仓库 URL，例如 https://github.com/owner/repo "
+                "或 https://gitlab.com/group/proj"
             )
         return {
             "source_type": "repo",
@@ -179,6 +185,15 @@ def build_command(
         cmd.append("--polish")
     if data.get("strategy"):
         cmd += ["--strategy", data["strategy"]]
+    if data.get("learning_goal"):
+        cmd += ["--learning-goal", data["learning_goal"]]
+    if data.get("bilingual"):
+        cmd.append("--bilingual")
+    if data.get("pagerank_order"):
+        cmd.append("--pagerank-order")
+    if data.get("seed_files"):
+        seeds = data["seed_files"] if isinstance(data["seed_files"], list) else [data["seed_files"]]
+        cmd += ["--seed", *[str(item) for item in seeds if str(item).strip()]]
     return cmd
 
 
@@ -494,6 +509,13 @@ class JobManager:
                 if moved:
                     job.append_log(f"QUICK_STUDY_PARTIAL: {moved.as_posix()}")
             self._persist(job)
+            if job.status in {"succeeded", "failed", "cancelled"}:
+                try:
+                    from utils.webhook import notify_completion
+
+                    notify_completion(job.snapshot())
+                except Exception as exc:
+                    job.append_log(f"QUICK_STUDY_WARN: webhook {exc}")
 
     def _persist(self, job: Job) -> None:
         try:

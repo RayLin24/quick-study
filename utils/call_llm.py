@@ -194,7 +194,7 @@ def _provider_error_text(payload) -> str | None:
     return str(err)
 
 
-def llm_identity() -> tuple[str, str]:
+def llm_identity(stage: str | None = None) -> tuple[str, str]:
     provider = get_llm_provider()
     if provider == "OPENROUTER":
         model = _clean_env("OPENROUTER_MODEL", DEFAULT_OPENROUTER_MODEL)
@@ -202,11 +202,15 @@ def llm_identity() -> tuple[str, str]:
         model = os.getenv("GEMINI_MODEL", "gemini-2.5-pro-exp-03-25")
     else:
         model = _clean_env(f"{provider}_MODEL") or "unknown"
+    if stage:
+        from utils.models import model_for_stage
+
+        model = model_for_stage(stage, model)
     return provider, model
 
 
 def _cache_material(prompt: str) -> str:
-    provider, model = llm_identity()
+    provider, model = llm_identity(getattr(_current_stage, "value", None))
     return f"{provider}\n{model}\n{prompt}"
 
 
@@ -474,6 +478,9 @@ def _call_llm_provider(prompt: str, progress: _Progress, temperature: float = 0.
             raise ValueError(format_error(f"{model_var} environment variable is required"))
         if not base_url:
             raise ValueError(format_error(f"{base_url_var} environment variable is required"))
+    from utils.models import model_for_stage
+
+    model = model_for_stage(getattr(_current_stage, "value", None), model)
 
     url = chat_completions_url(base_url)
 
