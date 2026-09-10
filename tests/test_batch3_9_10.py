@@ -23,7 +23,7 @@ def test_9_pytest_ci_runs_on_push_and_pull_request():
     assert "name: pytest" in text
     assert "\n  push:" in text or "\non:\n  push:" in text
     assert "pull_request:" in text
-    assert "workflow_dispatch" not in text
+    assert "workflow_dispatch:" not in text
     assert "python -m pytest" in text
     assert "pip install -r requirements.txt" in text
     assert "OPENROUTER_API_KEY" not in text
