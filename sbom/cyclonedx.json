@@ -1,0 +1,92 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "quick-study",
+      "version": "0.0.0"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "pocketflow",
+      "version": "0.0.1",
+      "purl": "pkg:pypi/pocketflow@0.0.1"
+    },
+    {
+      "type": "library",
+      "name": "PyYAML",
+      "version": "6.0.1",
+      "purl": "pkg:pypi/pyyaml@6.0.1"
+    },
+    {
+      "type": "library",
+      "name": "requests",
+      "version": "2.32.3",
+      "purl": "pkg:pypi/requests@2.32.3"
+    },
+    {
+      "type": "library",
+      "name": "GitPython",
+      "version": "3.1.43",
+      "purl": "pkg:pypi/gitpython@3.1.43"
+    },
+    {
+      "type": "library",
+      "name": "google-cloud-aiplatform",
+      "version": "1.71.1",
+      "purl": "pkg:pypi/google-cloud-aiplatform@1.71.1"
+    },
+    {
+      "type": "library",
+      "name": "google-genai",
+      "version": "1.9.0",
+      "purl": "pkg:pypi/google-genai@1.9.0"
+    },
+    {
+      "type": "library",
+      "name": "python-dotenv",
+      "version": "1.0.1",
+      "purl": "pkg:pypi/python-dotenv@1.0.1"
+    },
+    {
+      "type": "library",
+      "name": "pathspec",
+      "version": "0.12.1",
+      "purl": "pkg:pypi/pathspec@0.12.1"
+    },
+    {
+      "type": "library",
+      "name": "fastapi",
+      "version": "0.115.6",
+      "purl": "pkg:pypi/fastapi@0.115.6"
+    },
+    {
+      "type": "library",
+      "name": "uvicorn",
+      "version": "0.32.1",
+      "purl": "pkg:pypi/uvicorn@0.32.1"
+    },
+    {
+      "type": "library",
+      "name": "Markdown",
+      "version": "3.7",
+      "purl": "pkg:pypi/markdown@3.7"
+    },
+    {
+      "type": "library",
+      "name": "python-multipart",
+      "version": "0.0.17",
+      "purl": "pkg:pypi/python-multipart@0.0.17"
+    },
+    {
+      "type": "library",
+      "name": "Jinja2",
+      "version": "3.1.4",
+      "purl": "pkg:pypi/jinja2@3.1.4"
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+# Pinned runtime deps for reproducible self-host (#26).
+# Install: pip install -r requirements.lock
+# Regenerating SBOM: python scripts/write_sbom.py
+pocketflow==0.0.1
+PyYAML==6.0.1
+requests==2.32.3
+GitPython==3.1.43
+google-cloud-aiplatform==1.71.1
+google-genai==1.9.0
+python-dotenv==1.0.1
+pathspec==0.12.1
+fastapi==0.115.6
+uvicorn==0.32.1
+Markdown==3.7
+python-multipart==0.0.17
+Jinja2==3.1.4

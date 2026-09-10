@@ -102,6 +102,16 @@
             <button type="button" class="preset" data-include="*.ts *.tsx *.js *.jsx">Web</button>
             <button type="button" class="preset" data-include="*.md *.rst">Docs</button>
           </span>
+          <button type="button" id="scan-packages">扫描 monorepo 包（package.json / pyproject / apps/*）</button>
+          <ul id="package-list" class="package-list" hidden></ul>
+        </label>
+        <label class="field">
+          <span>双模型预设（默认仍是 glm-5.3-flash）</span>
+          <select id="model-preset">
+            <option value="flash">默认 · structure/write 都是 flash</option>
+            <option value="dual">推荐 · structure flash / write 更强</option>
+          </select>
+          <p id="model-cost" class="ask-hint"></p>
         </label>
         <label class="choice">
           <input type="checkbox" id="overview_only" name="overview_only">

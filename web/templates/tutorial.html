@@ -84,11 +84,14 @@
       <p class="stale-banner" role="status">教程可能过期：上游 commit 已漂移（{{ stale.recorded }} → {{ stale.current }}）</p>
       {% endif %}
       {% if quality %}
-      <p class="quality-banner" data-score="{{ quality.score }}">质量评分 {{ quality.score }}{% if not quality.ok %} · 有断链/空章/缺 source{% endif %}</p>
+      <p class="quality-banner" data-score="{{ quality.score }}">质量评分 {{ quality.score }}{% if quality.abstraction_coverage %} · 抽象覆盖 {{ quality.abstraction_coverage.ratio }}{% endif %}{% if quality.relationship_density %} · 关系密度 {{ quality.relationship_density.density }}{% endif %}{% if not quality.ok %} · 有断链/空章/缺 source{% endif %}</p>
       {% endif %}
       {% if week_path and week_path.days %}
       <aside class="week-path">
-        <h2>新手一周读完</h2>
+        <h2>自适应一周路径</h2>
+        {% if week_path.skipped %}
+        <p class="ask-hint">已跳过 {{ week_path.skipped | length }} 章（按阅读进度）</p>
+        {% endif %}
         <ol>
           {% for day in week_path.days %}
           <li>{{ day.day }}：{% for item in day.chapters %}{{ item.title }}{% if not loop.last %}、{% endif %}{% endfor %}</li>
@@ -168,7 +171,11 @@
           <input type="checkbox" id="ask-include-source">
           附带源文件片段（默认关闭）
         </label>
-        <p id="ask-countdown" class="ask-hint" data-timeout="{{ llm_timeout }}">Ask 超时对照 LLM_TIMEOUT={{ llm_timeout }}s</p>
+        <label class="choice">
+          <input type="checkbox" id="ask-sse">
+          流式回答（Ask SSE，与流水线日志流分开计费）
+        </label>
+        <p id="ask-countdown" class="ask-hint" data-timeout="{{ llm_timeout }}">Ask 超时对照 LLM_TIMEOUT={{ llm_timeout }}s。SSE 一次提问 = 一次 completions，默认不再打非流式。</p>
         <button type="button" id="ask-btn">提问</button>
         <button type="button" id="ask-copy-md" hidden>复制为 Markdown</button>
         <p id="ask-error" class="error" hidden></p>
@@ -181,6 +188,19 @@
           <ul id="ask-source-list"></ul>
         </details>
       </section>
+      {% if filename != "index.md" %}
+      <section class="rewrite-box" aria-labelledby="rewrite-title">
+        <h2 id="rewrite-title">重写这一章</h2>
+        <p class="ask-hint">改抽象说明后只重生本章（1 次写章调用），比全量 --resume 便宜。</p>
+        <label class="field">
+          <span>抽象说明</span>
+          <textarea id="rewrite-desc" rows="3" placeholder="这一章应该讲清楚什么">{% for item in chapter_abstractions %}{% if item.filename == filename %}{{ item.description }}{% endif %}{% endfor %}</textarea>
+        </label>
+        <button type="button" id="rewrite-btn" data-filename="{{ filename }}">重写本章</button>
+        <p id="rewrite-error" class="error" hidden></p>
+        <p id="rewrite-ok" class="ask-hint" hidden></p>
+      </section>
+      {% endif %}
     </article>
   </div>
 
@@ -204,68 +224,12 @@
   </section>
   <script src="/static/vendor/highlight.min.js"></script>
   <script src="/static/vendor/mermaid.min.js"></script>
+  <script src="/static/diagram_click.js"></script>
   <script src="/static/reader.js"></script>
   <script>
     hljs.highlightAll();
     function bindMermaidChapterClicks() {
-      const raw = document.getElementById("chapter-nav");
-      const nodeRaw = document.getElementById("diagram-nodes");
-      if (!raw) return;
-      let chapters = [];
-      let diagramNodes = [];
-      try { chapters = JSON.parse(raw.textContent || "[]"); } catch { return; }
-      try { diagramNodes = JSON.parse((nodeRaw && nodeRaw.textContent) || "[]"); } catch { diagramNodes = []; }
-      const byTitle = {};
-      const byId = {};
-      chapters.forEach((ch) => {
-        if (ch.filename && ch.filename !== "index.md" && ch.title) {
-          byTitle[String(ch.title).trim()] = { href: ch.href, blob: null, files: [] };
-        }
-      });
-      (diagramNodes || []).forEach((item) => {
-        const title = String(item.title || "").trim();
-        const rec = {
-          href: item.blob || item.href || (title && byTitle[title] && byTitle[title].href) || "",
-          blob: item.blob || null,
-          chapter: item.chapter || (title && byTitle[title] && byTitle[title].href) || "",
-          files: item.files || [],
-        };
-        if (title) byTitle[title] = rec;
-        if (item.id) byId[item.id] = rec;
-      });
-      function resolveNode(node) {
-        const id = node.id || "";
-        const idMatch = id.match(/\bA\d+\b/);
-        if (idMatch && byId[idMatch[0]]) return byId[idMatch[0]];
-        const label = (node.textContent || "").trim().split("\n")[0].trim();
-        if (byTitle[label]) return byTitle[label];
-        const firstLine = label.split(/\s{2,}/)[0];
-        return byTitle[firstLine] || null;
-      }
-      document.querySelectorAll(".mermaid .node").forEach((node) => {
-        const rec = resolveNode(node);
-        if (!rec) return;
-        const blob = rec.blob;
-        const chapter = rec.chapter || rec.href;
-        const target = blob || chapter;
-        if (!target) return;
-        node.style.cursor = "pointer";
-        node.setAttribute("tabindex", "0");
-        if (rec.files && rec.files.length) node.setAttribute("data-files", rec.files.join(","));
-        if (blob) node.setAttribute("data-blob-href", blob);
-        if (chapter) node.setAttribute("data-chapter-href", chapter);
-        const go = () => {
-          if (blob && /^https?:\/\//.test(blob)) {
-            window.open(blob, "_blank", "noopener,noreferrer");
-            return;
-          }
-          if (chapter) window.location.href = chapter;
-        };
-        node.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); go(); });
-        node.addEventListener("keydown", (ev) => {
-          if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); }
-        });
-      });
+      if (window.qsDiagramClick) window.qsDiagramClick.bindMermaidChapterClicks(document);
     }
     (async () => {
       mermaid.initialize({
@@ -315,12 +279,51 @@
     const askQ = document.getElementById("ask-question");
     const askErr = document.getElementById("ask-error");
     const askAns = document.getElementById("ask-answer");
+    async function consumeAskSse() {
+      const res = await fetch("/api/tutorials/{{ tutorial_name }}/ask/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: askQ.value }),
+      });
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "流式提问失败");
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      let donePayload = { answer: "", citations: [], used_chapters: [], markdown: "" };
+      askAns.hidden = false;
+      askAns.textContent = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        while (buf.includes("\n\n")) {
+          const idx = buf.indexOf("\n\n");
+          const block = buf.slice(0, idx);
+          buf = buf.slice(idx + 2);
+          const line = block.split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          const ev = JSON.parse(line.slice(5).trim() || "{}");
+          if (ev.type === "token" && ev.text) askAns.textContent += ev.text;
+          if (ev.type === "error") throw new Error(ev.detail || "Ask SSE 失败");
+          if (ev.type === "done") donePayload = ev;
+        }
+      }
+      return donePayload;
+    }
     if (askBtn) {
       askBtn.addEventListener("click", async () => {
         askErr.hidden = true;
         askAns.hidden = true;
         askBtn.disabled = true;
         try {
+          const useSse = !!(document.getElementById("ask-sse") && document.getElementById("ask-sse").checked);
+          let data;
+          if (useSse) {
+            data = await consumeAskSse();
+          } else {
           const res = await fetch("/api/tutorials/{{ tutorial_name }}/ask", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -330,12 +333,13 @@
               include_source: !!(document.getElementById("ask-include-source") && document.getElementById("ask-include-source").checked),
             }),
           });
-          const data = await res.json();
+          data = await res.json();
           if (!res.ok) {
             throw new Error(data.detail || "提问失败");
           }
+          }
           askAns.hidden = false;
-          askAns.textContent = data.answer;
+          if (!useSse) askAns.textContent = data.answer;
           const copyBtn = document.getElementById("ask-copy-md");
           if (copyBtn) {
             copyBtn.hidden = false;
@@ -382,6 +386,36 @@
           askErr.textContent = err.message;
         } finally {
           askBtn.disabled = false;
+        }
+      });
+    }
+    const rewriteBtn = document.getElementById("rewrite-btn");
+    if (rewriteBtn) {
+      rewriteBtn.addEventListener("click", async () => {
+        const err = document.getElementById("rewrite-error");
+        const ok = document.getElementById("rewrite-ok");
+        err.hidden = true;
+        ok.hidden = true;
+        rewriteBtn.disabled = true;
+        try {
+          const res = await fetch("/api/tutorials/{{ tutorial_name }}/rewrite-chapter", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filename: rewriteBtn.getAttribute("data-filename"),
+              description: (document.getElementById("rewrite-desc") || {}).value || "",
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.detail || "重写失败");
+          ok.hidden = false;
+          ok.textContent = `已重写 ${data.filename}（${data.calls || 1} 次调用）`;
+          window.location.reload();
+        } catch (e) {
+          err.hidden = false;
+          err.textContent = e.message;
+        } finally {
+          rewriteBtn.disabled = false;
         }
       });
     }

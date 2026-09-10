@@ -362,6 +362,69 @@ document.querySelectorAll(".preset").forEach((btn) => {
   });
 });
 
+const scanPkg = document.getElementById("scan-packages");
+const pkgList = document.getElementById("package-list");
+if (scanPkg && pkgList) {
+  scanPkg.addEventListener("click", async () => {
+    const localDir = (form.local_dir && form.local_dir.value.trim()) || "";
+    const res = await fetch("/api/packages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ local_dir: localDir }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.detail || "扫描失败");
+      return;
+    }
+    pkgList.hidden = false;
+    pkgList.innerHTML = "";
+    (data.items || []).forEach((item) => {
+      const li = document.createElement("li");
+      const label = document.createElement("label");
+      label.className = "choice";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = true;
+      box.setAttribute("data-include", item.include || "");
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(` ${item.path} (${item.kind}) → ${item.include}`));
+      li.appendChild(label);
+      pkgList.appendChild(li);
+    });
+    const apply = () => {
+      const bits = [];
+      pkgList.querySelectorAll("input[type=checkbox]:checked").forEach((el) => {
+        const inc = el.getAttribute("data-include");
+        if (inc) bits.push(inc);
+      });
+      form.include.value = bits.join(" ");
+    };
+    pkgList.querySelectorAll("input").forEach((el) => el.addEventListener("change", apply));
+    apply();
+  });
+}
+
+const modelPreset = document.getElementById("model-preset");
+const modelCost = document.getElementById("model-cost");
+async function refreshModelCost() {
+  if (!modelCost) return;
+  const n = Number((document.getElementById("max_abstractions") || {}).value || 10);
+  const res = await fetch(`/api/model-presets?max_abstractions=${n}`);
+  const data = await res.json();
+  const rows = data.compare || [];
+  const chosen = (modelPreset && modelPreset.value) || "flash";
+  const hit = rows.find((r) => r.id === chosen) || rows[0];
+  const other = rows.find((r) => r.id !== (hit && hit.id));
+  if (hit) {
+    modelCost.textContent = `${hit.label} 估 $${hit.usd}` + (other ? `；对照 ${other.id} $${other.usd}` : "") + "。默认模型仍是 z-ai/glm-5.3-flash，双模型需自己设 LLM_STRUCTURE_MODEL / LLM_WRITE_MODEL。";
+  }
+}
+if (modelPreset) {
+  modelPreset.addEventListener("change", refreshModelCost);
+  refreshModelCost();
+}
+
 if (replaceBtn) {
   replaceBtn.addEventListener("click", async () => {
     setError("");
