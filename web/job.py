@@ -643,6 +643,9 @@ class JobManager:
                         "job_done",
                         status=job.status,
                         id=job.id,
+                        job_id=job.id,
+                        tutorial=job.output_name or "",
+                        stage="done",
                         output_name=job.output_name,
                     )
                 except Exception:

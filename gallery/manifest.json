@@ -1,0 +1,41 @@
+{
+  "title": "Quick Study showcase",
+  "note": "Seeded from already-generated docs/ examples. Do not live-regenerate huge repos.",
+  "items": [
+    {
+      "name": "PocketFlow",
+      "repo": "https://github.com/The-Pocket/PocketFlow",
+      "stars_note": "100-line LLM framework",
+      "local": "docs/PocketFlow",
+      "pages": "./PocketFlow/"
+    },
+    {
+      "name": "FastAPI",
+      "repo": "https://github.com/tiangolo/fastapi",
+      "stars_note": "high-star web framework",
+      "local": "docs/FastAPI",
+      "pages": "./FastAPI/"
+    },
+    {
+      "name": "Flask",
+      "repo": "https://github.com/pallets/flask",
+      "stars_note": "classic Python web",
+      "local": "docs/Flask",
+      "pages": "./Flask/"
+    },
+    {
+      "name": "Click",
+      "repo": "https://github.com/pallets/click",
+      "stars_note": "CLI decorator classic",
+      "local": "docs/Click",
+      "pages": "./Click/"
+    },
+    {
+      "name": "Requests",
+      "repo": "https://github.com/psf/requests",
+      "stars_note": "HTTP for humans",
+      "local": "docs/Requests",
+      "pages": "./Requests/"
+    }
+  ]
+}

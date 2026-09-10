@@ -44,9 +44,42 @@ a {
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,
-select:focus-visible {
+select:focus-visible,
+.mermaid-svg-focus:focus,
+.mermaid-svg-focus:focus-visible {
   outline: 2px solid var(--color-ring);
   outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 20;
+  padding: 8px 12px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  top: 12px;
+}
+
+.advanced-options {
+  margin: 12px 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+
+.advanced-options > summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
 }
 
 .top {
@@ -827,6 +860,15 @@ button:disabled {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #7a6a58;
+}
+
+@media (min-width: 801px) {
+  details.advanced-options > summary {
+    display: none;
+  }
+  details.advanced-options > :not(summary) {
+    display: block;
+  }
 }
 
 @media (max-width: 800px) {

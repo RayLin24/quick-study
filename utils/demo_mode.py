@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+from utils.auth_errors import AUTH_DEMO, DETAIL_DEMO
+
 DEMO_REPO = "https://github.com/octocat/Hello-World"
 WRITE_HINTS = ("/api/jobs", "/api/hooks", "/retry-chapter", "/api/tutorials")
 
@@ -31,5 +33,7 @@ def demo_payload() -> dict:
         "demo": True,
         "repo": DEMO_REPO,
         "generate_disabled": True,
-        "detail": "演示模式：固定样例仓，禁止生成",
+        "detail": DETAIL_DEMO,
+        "code": AUTH_DEMO,
+        "status": 403,
     }

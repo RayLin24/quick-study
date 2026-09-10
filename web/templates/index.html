@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
+  <a class="skip-link" href="#generate-title">跳到主内容</a>
   <header class="top">
     <a class="brand" href="/">Quick Study</a>
     <p class="tag" data-i18n="tag">把代码库变成可读教程</p>
@@ -28,6 +29,7 @@
         </div>
       </details>
       <a href="/tools">全部工具</a>
+      <a href="/gallery">精选教程廊</a>
       <a href="/jobs">任务历史</a>
       <a href="/feed.xml">Atom</a>
       <button type="button" id="lang-toggle" data-lang="{{ ui_lang or 'zh' }}">{{ 'English' if ui_lang == 'en' else '中文' }}</button>
@@ -61,20 +63,22 @@
         </label>
 
         <label class="field">
+          <span>教程语言</span>
+          <select id="language" name="language">
+            <option value="Chinese" {% if default_language == "Chinese" %}selected{% endif %}>中文</option>
+            <option value="english" {% if default_language == "english" %}selected{% endif %}>English</option>
+          </select>
+        </label>
+
+        <details class="advanced-options" id="advanced-options">
+          <summary data-i18n="advanced">高级选项</summary>
+        <label class="field">
           <span>策略预设</span>
           <select id="strategy" name="strategy">
             <option value="">自定义</option>
             <option value="beginner">新手</option>
             <option value="deep">深度</option>
             <option value="skim">速览（只出总览）</option>
-          </select>
-        </label>
-
-        <label class="field">
-          <span>教程语言</span>
-          <select id="language" name="language">
-            <option value="Chinese" {% if default_language == "Chinese" %}selected{% endif %}>中文</option>
-            <option value="english" {% if default_language == "english" %}selected{% endif %}>English</option>
           </select>
         </label>
 
@@ -155,6 +159,7 @@
           <span>单文件大小上限（字节）</span>
           <input id="max_size" name="max_size" type="number" min="1" placeholder="100000">
         </label>
+        </details>
 
         <p id="form-error" class="error" hidden></p>
         <div id="preview-card" class="preview-card" hidden></div>

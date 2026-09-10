@@ -9,6 +9,7 @@ WRITE_PREFIXES = (
     "/v1/jobs",
     "/api/hooks",
     "/api/workbench",
+    "/api/ops",
 )
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 ALWAYS_OPEN = {"/login", "/healthz", "/api/config"}

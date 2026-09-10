@@ -6,13 +6,15 @@ import json
 import time
 from pathlib import Path
 
+from utils.log_context import merge_log_context
+
 
 def jsonl_path(output_dir: Path) -> Path:
     return Path(output_dir) / "run.jsonl"
 
 
 def emit_run(output_dir: Path, event: str, **fields) -> dict:
-    rec = {"ts": time.time(), "event": event, **fields}
+    rec = merge_log_context(ts=time.time(), event=event, **fields)
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     with jsonl_path(output_dir).open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")

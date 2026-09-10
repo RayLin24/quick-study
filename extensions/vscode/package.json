@@ -1,0 +1,46 @@
+{
+  "name": "quick-study",
+  "displayName": "Quick Study",
+  "description": "Thin sidebar client: list local tutorials and Ask this repo.",
+  "version": "0.1.0",
+  "publisher": "quick-study",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Other"],
+  "activationEvents": ["onView:quickStudy.tutorials"],
+  "main": "./src/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "quickStudy",
+          "title": "Quick Study",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "quickStudy": [
+        {
+          "id": "quickStudy.tutorials",
+          "name": "Tutorials",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Quick Study",
+      "properties": {
+        "quickStudy.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8000",
+          "description": "Local Quick Study server"
+        },
+        "quickStudy.token": {
+          "type": "string",
+          "default": "",
+          "description": "Optional QUICK_STUDY_TOKEN / READ_TOKEN (do not commit)"
+        }
+      }
+    }
+  }
+}

@@ -208,5 +208,17 @@ To run this project in a Docker container, you'll need to pass your API keys as 
 </div>
 <br>
 
+## Positioning vs hosted wiki products
 
+Quick Study is a **self-hosted follow-along tutorial** (clone → generate → read chapters with diagrams). It is not a hosted repo wiki.
+
+| | [DeepWiki](https://deepwiki.com) | RepoWiki-style hosted wiki | **Quick Study (this repo)** |
+| --- | --- | --- | --- |
+| Where it runs | Hosted (deepwiki.com) | Hosted / SaaS wiki | **Your machine / Docker** (`127.0.0.1`) |
+| Output | Chat + wiki pages | Wiki dump of the repo | Numbered **follow-along chapters** + Mermaid |
+| Auth / secrets | Vendor account | Vendor account | `QUICK_STUDY_TOKEN` / read token; keys stay in `.env` |
+| Ask | Full-repo chat | Wiki Q&A | Ask **only** the generated tutorial (+ optional source windows) |
+| Best when | You want a public instant wiki | You want a browsable wiki site | You want a **local, bill-aware** path you can export (EPUB / Obsidian / Pages) |
+
+See `docs/clone-bloat.md` if you only need the tool and not the bulky upstream example tutorials.
 
