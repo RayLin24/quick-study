@@ -125,7 +125,14 @@
       </nav>
       <section class="ask-box" aria-labelledby="ask-title">
         <h2 id="ask-title">问这个仓</h2>
-        <p class="ask-hint">只根据已生成的教程和文中 <code># source:</code> 路径回答。没有教程时会拒绝。</p>
+        <p class="ask-hint">主依据是已生成教程和文中 <code># source:</code> / <code>*source:</code> 路径。没有教程时会拒绝。</p>
+        <p class="ask-hint ask-evidence-legend">
+          证据分层：
+          <span class="evidence-tag evidence-tutorial">教程</span>
+          已生成章节（默认）
+          <span class="evidence-tag evidence-source">源码</span>
+          可选，Top-K 章 <code>*source:</code> 短片段（默认关闭，无向量库）
+        </p>
         <label class="field">
           <span>问题</span>
           <textarea id="ask-question" rows="3" placeholder="这篇教程里入口在哪里？"></textarea>
@@ -134,14 +141,21 @@
           <input type="checkbox" id="ask-thread">
           多轮对话
         </label>
+        <label class="choice">
+          <input type="checkbox" id="ask-include-source">
+          附带源文件片段（默认关闭）
+        </label>
         <p id="ask-countdown" class="ask-hint" data-timeout="{{ llm_timeout }}">Ask 超时对照 LLM_TIMEOUT={{ llm_timeout }}s</p>
         <button type="button" id="ask-btn">提问</button>
         <button type="button" id="ask-copy-md" hidden>复制为 Markdown</button>
         <p id="ask-error" class="error" hidden></p>
         <div id="ask-answer" class="ask-answer" hidden></div>
         <details id="ask-used" class="ask-used" hidden>
-          <summary>用了哪些章</summary>
+          <summary>证据分层</summary>
+          <h3 class="evidence-heading"><span class="evidence-tag evidence-tutorial">教程</span> 用了哪些章</h3>
           <ul id="ask-used-list"></ul>
+          <h3 class="evidence-heading"><span class="evidence-tag evidence-source">源码</span> 片段</h3>
+          <ul id="ask-source-list"></ul>
         </details>
       </section>
     </article>
@@ -251,6 +265,7 @@
             body: JSON.stringify({
               question: askQ.value,
               thread: !!(document.getElementById("ask-thread") && document.getElementById("ask-thread").checked),
+              include_source: !!(document.getElementById("ask-include-source") && document.getElementById("ask-include-source").checked),
             }),
           });
           const data = await res.json();
@@ -269,18 +284,36 @@
           }
           const used = document.getElementById("ask-used");
           const usedList = document.getElementById("ask-used-list");
+          const sourceList = document.getElementById("ask-source-list");
           const cites = data.citations && data.citations.length ? data.citations : data.used_chapters;
-          if (used && usedList && cites && cites.length) {
+          const snippets = (data.evidence && data.evidence.source) || data.source_snippets || [];
+          if (used && ((cites && cites.length) || (snippets && snippets.length))) {
             used.hidden = false;
-            usedList.innerHTML = "";
-            cites.forEach((ch) => {
-              const li = document.createElement("li");
-              const a = document.createElement("a");
-              a.href = ch.href || (`/t/{{ tutorial_name }}/` + (ch.filename || ""));
-              a.textContent = `${ch.filename || ""} ${ch.title || ""}`.trim();
-              li.appendChild(a);
-              usedList.appendChild(li);
-            });
+            if (usedList) {
+              usedList.innerHTML = "";
+              (cites || []).forEach((ch) => {
+                const li = document.createElement("li");
+                const a = document.createElement("a");
+                a.href = ch.href || (`/t/{{ tutorial_name }}/` + (ch.filename || ""));
+                a.textContent = `${ch.filename || ""} ${ch.title || ""}`.trim();
+                li.appendChild(a);
+                usedList.appendChild(li);
+              });
+            }
+            if (sourceList) {
+              sourceList.innerHTML = "";
+              snippets.forEach((sn) => {
+                const li = document.createElement("li");
+                const label = document.createElement("span");
+                label.className = "evidence-tag evidence-source";
+                label.textContent = "源码";
+                li.appendChild(label);
+                li.appendChild(document.createTextNode(
+                  ` ${sn.path || ""} L${sn.start_line || "?"}-L${sn.end_line || "?"} · ${sn.chapter || ""}`
+                ));
+                sourceList.appendChild(li);
+              });
+            }
           }
         } catch (err) {
           askErr.hidden = false;

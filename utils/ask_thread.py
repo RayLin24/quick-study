@@ -43,13 +43,22 @@ def format_history(turns: list[dict], *, max_chars: int = 4000) -> str:
     return text[-max_chars:]
 
 
-def ask_with_thread(folder: Path, question: str, *, persist: bool = True) -> AskResult:
+def ask_with_thread(
+    folder: Path,
+    question: str,
+    *,
+    persist: bool = True,
+    include_source: bool | None = None,
+) -> AskResult:
     turns = load_thread(folder)
     history = format_history(turns)
     prompt = question
     if history:
         prompt = f"先前对话：\n{history}\n\n新问题：{question}"
-    raw = ask_tutorial_detailed(folder, prompt)
+    try:
+        raw = ask_tutorial_detailed(folder, prompt, include_source=include_source)
+    except TypeError:
+        raw = ask_tutorial_detailed(folder, prompt)
     result = raw if isinstance(raw, AskResult) else AskResult(answer=str(raw))
     if persist:
         turns.append(

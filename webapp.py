@@ -148,6 +148,7 @@ class RenameIn(BaseModel):
 class AskIn(BaseModel):
     question: str = ""
     thread: bool = False
+    include_source: bool = False
 
 
 class AnnotationIn(BaseModel):
@@ -386,9 +387,14 @@ def create_app(
             emit_run(output, "ask", tutorial=tutorial_name)
             with span("ask", output_dir=output, attributes={"tutorial": tutorial_name}):
                 if body.thread:
-                    raw = ask_with_thread(folder, body.question)
+                    raw = ask_with_thread(folder, body.question, include_source=body.include_source)
                 else:
-                    raw = app.state.ask_fn(folder, body.question)
+                    try:
+                        raw = app.state.ask_fn(
+                            folder, body.question, include_source=body.include_source
+                        )
+                    except TypeError:
+                        raw = app.state.ask_fn(folder, body.question)
         except BudgetExceeded as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         except AskRefused as exc:
@@ -404,6 +410,15 @@ def create_app(
                 "markdown": raw.markdown or raw.answer,
                 "degraded": raw.degraded,
                 "attempts": raw.attempts,
+                "include_source": raw.include_source,
+                "source_snippets": raw.source_snippets,
+                "evidence": raw.evidence
+                or {
+                    "tutorial": raw.used_chapters,
+                    "source": raw.source_snippets,
+                    "layers": ["tutorial"] + (["source"] if raw.source_snippets else []),
+                },
+                "retrieval": raw.retrieval,
             }
         if isinstance(raw, dict) and "answer" in raw:
             return {
@@ -414,6 +429,15 @@ def create_app(
                 "markdown": raw.get("markdown") or raw["answer"],
                 "degraded": bool(raw.get("degraded")),
                 "attempts": raw.get("attempts") or 1,
+                "include_source": bool(raw.get("include_source")),
+                "source_snippets": raw.get("source_snippets") or [],
+                "evidence": raw.get("evidence")
+                or {
+                    "tutorial": raw.get("used_chapters") or [],
+                    "source": raw.get("source_snippets") or [],
+                    "layers": ["tutorial"],
+                },
+                "retrieval": raw.get("retrieval") or "bm25",
             }
         return {
             "answer": raw,
@@ -423,6 +447,10 @@ def create_app(
             "markdown": raw,
             "degraded": False,
             "attempts": 1,
+            "include_source": False,
+            "source_snippets": [],
+            "evidence": {"tutorial": [], "source": [], "layers": ["tutorial"]},
+            "retrieval": "bm25",
         }
 
     @app.post("/api/jobs/preview")

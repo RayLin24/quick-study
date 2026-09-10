@@ -31,6 +31,7 @@ TOOLS = (
             "properties": {
                 "tutorial": {"type": "string"},
                 "question": {"type": "string"},
+                "include_source": {"type": "boolean", "default": False},
             },
             "required": ["tutorial", "question"],
         },
@@ -56,12 +57,19 @@ def call_mcp_tool(output_dir: Path, name: str, arguments: dict | None = None) ->
         tutorial = str(args.get("tutorial") or "").strip()
         question = str(args.get("question") or "").strip()
         folder = output / tutorial
-        raw = ask_tutorial_detailed(folder, question)
+        raw = ask_tutorial_detailed(
+            folder,
+            question,
+            include_source=bool(args.get("include_source")),
+        )
         if isinstance(raw, AskResult):
             return {
                 "answer": raw.answer,
                 "used_chapters": raw.used_chapters,
                 "routed": raw.routed,
+                "include_source": raw.include_source,
+                "source_snippets": raw.source_snippets,
+                "evidence": raw.evidence,
             }
         return {"answer": raw}
     raise ValueError(f"unknown or write-denied MCP tool: {name}")
