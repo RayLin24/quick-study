@@ -14,13 +14,11 @@ from pathlib import Path
 from utils.repo_map import build_repo_map, expand_abstraction_files
 
 
-def _upstream_commit(local_dir):
-    if not local_dir:
-        return None
+def _upstream_commit(local_dir, repo_url=None, token=None):
     try:
-        from utils.stale import git_head
+        from utils.stale import resolve_upstream_commit
 
-        return git_head(local_dir)
+        return resolve_upstream_commit(repo_url=repo_url, local_dir=local_dir, token=token)
     except Exception:
         return None
 
@@ -342,11 +340,21 @@ class FetchRepo(Node):
         print(crawl_progress("done", count=len(files_list)))
         print(f"Fetched {len(files_list)} files.")
         print(f"QUICK_STUDY_STATS: file_count={len(files_list)} map_mode=pending")
-        return files_list
+        sha = _upstream_commit(
+            prep_res.get("local_dir"),
+            repo_url=prep_res.get("repo_url"),
+            token=prep_res.get("token"),
+        )
+        return {"files": files_list, "upstream_commit": sha}
 
     def post(self, shared, prep_res, exec_res):
-        shared["files"] = exec_res
-        shared["file_count"] = len(exec_res)
+        if isinstance(exec_res, dict):
+            shared["files"] = exec_res.get("files") or []
+            if exec_res.get("upstream_commit"):
+                shared["upstream_commit"] = exec_res["upstream_commit"]
+        else:
+            shared["files"] = exec_res
+        shared["file_count"] = len(shared.get("files") or [])
         project_name = shared.get("project_name")
         if project_name:
             print(f"QUICK_STUDY_OUTPUT: {project_name}")
@@ -844,6 +852,37 @@ Now, provide the YAML output:
         shared["chapter_order"] = exec_res  # List of indices
 
 
+class ConfirmOutline(Node):
+    """UI/API gate after Identify + relationships + order, before parallel write."""
+
+    def prep(self, shared):
+        from utils.outline_gate import build_outline_payload
+
+        payload = build_outline_payload(shared)
+        payload["output_dir"] = shared.get("output_dir")
+        payload["confirm"] = bool(shared.get("confirm_outline"))
+        return payload
+
+    def exec(self, payload):
+        from utils.outline_gate import wait_for_outline_confirm
+
+        emit_step("outline")
+        output_dir = payload.get("output_dir") or "output"
+        print(
+            f"Outline ready: {payload.get('chapter_count')} abstractions, "
+            f"remaining writes={((payload.get('remaining_calls') or {}).get('remaining'))}"
+        )
+        return wait_for_outline_confirm(
+            output_dir,
+            payload,
+            enabled=bool(payload.get("confirm")),
+        )
+
+    def post(self, shared, prep_res, exec_res):
+        shared["outline_gate"] = exec_res
+        return "default"
+
+
 class WriteChapters(AsyncParallelBatchNode):
     async def prep_async(self, shared):
         chapter_order = shared["chapter_order"]  # List of indices
@@ -1154,8 +1193,10 @@ Now, directly provide a super beginner-friendly Markdown output (DON'T need ```m
             chapter_content = await asyncio.to_thread(_write_call)
 
         text = finalize_chapter(chapter_content, chapter_num, abstraction_name)
+        from utils.mermaid_validate import assert_chapter_mermaid
         from utils.relationships_check import append_required_links
 
+        assert_chapter_mermaid(text)
         text = append_required_links(text, item.get("relationship_edges") or "")
         text = inject_truncation_note(text, clip_stats)
         if item.get("output_folder") and item.get("filename"):
@@ -1195,17 +1236,35 @@ class CombineTutorial(Node):
             "chapters"
         ]  # list of strings -> content potentially translated
 
-        # --- Generate Mermaid Diagram ---
+        sha = shared.get("upstream_commit") or _upstream_commit(
+            shared.get("local_dir"),
+            repo_url=repo_url,
+            token=shared.get("github_token"),
+        )
+        chapter_filenames = {}
+        for i, abstraction_index in enumerate(chapter_order):
+            if 0 <= abstraction_index < len(abstractions) and i < len(chapters_content):
+                abstraction_name = abstractions[abstraction_index]["name"]
+                safe_name = "".join(c if c.isalnum() else "_" for c in abstraction_name).lower()
+                chapter_filenames[abstraction_index] = {
+                    "num": i + 1,
+                    "name": abstraction_name,
+                    "filename": f"{i+1:02d}_{safe_name}.md",
+                }
+
+        from utils.diagram_nodes import build_diagram_nodes, mermaid_node_lines
+        from utils.mermaid_validate import validate_mermaid
+
+        diagram_nodes = build_diagram_nodes(
+            abstractions,
+            files=shared.get("files") or [],
+            chapter_filenames=chapter_filenames,
+            repo_url=repo_url,
+            sha=sha,
+        )
+        # --- Generate Mermaid Diagram (files[] stay on nodes; click prefers blob) ---
         mermaid_lines = ["flowchart TD"]
-        # Add nodes for each abstraction using potentially translated names
-        for i, abstr in enumerate(abstractions):
-            node_id = f"A{i}"
-            # Use potentially translated name, sanitize for Mermaid ID and label
-            sanitized_name = abstr["name"].replace('"', "")
-            node_label = sanitized_name  # Using sanitized name only
-            mermaid_lines.append(
-                f'    {node_id}["{node_label}"]'
-            )  # Node label uses potentially translated name
+        mermaid_lines.extend(mermaid_node_lines(diagram_nodes))
         # Add edges for relationships using potentially translated labels
         for rel in relationships_data["details"]:
             from_node_id = f"A{rel['from']}"
@@ -1238,7 +1297,6 @@ class CombineTutorial(Node):
         index_content += f"## 推荐阅读路径\n\n"
 
         chapter_files = []
-        click_lines = []
         # Generate chapter links based on the determined order, using potentially translated names
         for i, abstraction_index in enumerate(chapter_order):
             # Ensure index is valid and we have content for it
@@ -1247,12 +1305,7 @@ class CombineTutorial(Node):
                     "name"
                 ]  # Potentially translated name
                 rationale = (abstractions[abstraction_index].get("description") or "").strip().split("\n")[0][:160]
-                # Sanitize potentially translated name for filename
-                safe_name = "".join(
-                    c if c.isalnum() else "_" for c in abstraction_name
-                ).lower()
-                filename = f"{i+1:02d}_{safe_name}.md"
-                click_lines.append(f'    click A{abstraction_index} "{filename}"')
+                filename = chapter_filenames[abstraction_index]["filename"]
                 index_content += f"{i+1}. [{abstraction_name}]({filename})"
                 if rationale:
                     index_content += f" — {rationale}"
@@ -1272,7 +1325,19 @@ class CombineTutorial(Node):
                     f"Warning: Mismatch between chapter order, abstractions, or content at index {i} (abstraction index {abstraction_index}). Skipping file generation for this entry."
                 )
 
-        mermaid_diagram = "\n".join(mermaid_lines + click_lines)
+        mermaid_diagram = "\n".join(mermaid_lines)
+        report = validate_mermaid(mermaid_diagram)
+        if not report["ok"]:
+            print(f"QUICK_STUDY_WARN: mermaid invalid {report['errors']}; retrying without file labels")
+            mermaid_lines = ["flowchart TD"]
+            mermaid_lines.extend(mermaid_node_lines(diagram_nodes, include_files=False))
+            for rel in relationships_data["details"]:
+                edge_label = (rel["label"].replace('"', "").replace("\n", " "))[:30]
+                mermaid_lines.append(f'    A{rel["from"]} -- "{edge_label}" --> A{rel["to"]}')
+            mermaid_diagram = "\n".join(mermaid_lines)
+            report = validate_mermaid(mermaid_diagram)
+            if not report["ok"]:
+                raise ValueError(f"invalid mermaid after retry: {', '.join(report['errors'])}")
         try:
             from utils.graph_color import color_mermaid
 
@@ -1308,7 +1373,8 @@ class CombineTutorial(Node):
             "relationships": shared.get("relationships") or {},
             "strategy": shared.get("strategy"),
             "local_dir": shared.get("local_dir"),
-            "upstream_commit": _upstream_commit(shared.get("local_dir")),
+            "upstream_commit": sha,
+            "diagram_nodes": diagram_nodes,
         }
 
     def exec(self, prep_res):
@@ -1360,6 +1426,7 @@ class CombineTutorial(Node):
             "strategy": prep_res.get("strategy"),
             "local_dir": prep_res.get("local_dir"),
             "upstream_commit": prep_res.get("upstream_commit"),
+            "diagram_nodes": prep_res.get("diagram_nodes") or [],
         }
         meta_path = os.path.join(output_path, "meta.json")
         with open(meta_path, "w", encoding="utf-8") as f:

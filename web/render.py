@@ -115,12 +115,21 @@ def parse_truncation_note(text: str) -> dict | None:
     return {"truncated": int(match.group(1)), "total": int(match.group(2))}
 
 
-def mermaid_click_bindings(chapters: list[dict]) -> dict[str, str]:
-    return {
+def mermaid_click_bindings(chapters: list[dict], nodes: list[dict] | None = None) -> dict[str, str]:
+    mapping = {
         item["title"]: item["href"]
         for item in chapters
         if item.get("filename") not in {None, "index.md"} and item.get("title") and item.get("href")
     }
+    for node in nodes or []:
+        title = (node.get("title") or "").strip()
+        href = node.get("blob") or node.get("href") or mapping.get(title)
+        if title and href:
+            mapping[title] = href
+        node_id = node.get("id")
+        if node_id and href:
+            mapping[node_id] = href
+    return mapping
 
 
 def first_heading(text: str) -> str | None:
@@ -227,6 +236,7 @@ def markdown_to_html(
     cover: bool = False,
     repo_url: str | None = None,
     local_dir: str | None = None,
+    sha: str | None = None,
     return_toc: bool = False,
 ):
     if text.startswith("---"):
@@ -282,7 +292,7 @@ def markdown_to_html(
     body, toc = add_h2_ids(body)
     from utils.source_format import linkify_source_html
 
-    body = linkify_source_html(body, repo_url=repo_url, local_dir=local_dir)
+    body = linkify_source_html(body, repo_url=repo_url, local_dir=local_dir, sha=sha)
     body = _attach_editor_buttons(body)
     if return_toc:
         return body, toc

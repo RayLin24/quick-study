@@ -21,6 +21,7 @@ from utils.job_history import append_history, list_history
 from utils.job_queue import dequeue, enqueue, load_queue
 from utils.language import DEFAULT_LANGUAGE, normalize_language
 from utils.partial import expected_output_name, isolate_cancelled_output
+from utils.outline_gate import confirm_outline, load_outline_gate
 from utils.provider_cost import estimate_from_usage
 from utils.redact import looks_like_secret_key, redact_lines, redact_text
 from utils.strategy import apply_strategy
@@ -42,7 +43,8 @@ USAGE_RE = re.compile(
     r"(?P<rest>.*)$"
 )
 RETRY_AFTER_RE = re.compile(r"QUICK_STUDY_RETRY_AFTER:\s*(?P<seconds>\d+)")
-STEP_ORDER = ("fetch", "identify", "relationships", "order", "write", "combine")
+STEP_ORDER = ("fetch", "identify", "relationships", "order", "outline", "write", "combine")
+OUTLINE_RE = re.compile(r"QUICK_STUDY_OUTLINE:\s*(?P<body>.+)$")
 LOG_RING = int(os.getenv("JOB_LOG_RING", "2000"))
 DEFAULT_JOB_TIMEOUT = float(os.getenv("JOB_TIMEOUT_SECONDS", "3600"))
 
@@ -125,6 +127,9 @@ def validate_start_request(payload: dict) -> dict:
         "seed_files": payload.get("seed_files") or None,
         "queue": bool(payload.get("queue")),
         "retry_chapter": str(payload.get("retry_chapter") or "").strip() or None,
+        "confirm_outline": payload.get("confirm_outline")
+        if payload.get("confirm_outline") is not None
+        else os.getenv("OUTLINE_CONFIRM", "1").strip() not in {"0", "false", "no", "off"},
     }
 
     if source_type == "repo":
@@ -201,6 +206,10 @@ def build_command(
     if data.get("seed_files"):
         seeds = data["seed_files"] if isinstance(data["seed_files"], list) else [data["seed_files"]]
         cmd += ["--seed", *[str(item) for item in seeds if str(item).strip()]]
+    if data.get("confirm_outline"):
+        cmd.append("--confirm-outline")
+    else:
+        cmd.append("--skip-outline-confirm")
     return cmd
 
 
@@ -292,6 +301,8 @@ class Job:
         self.timeout = timeout
         self.cancelled = False
         self.paused = False
+        self.awaiting_outline = False
+        self.outline: Optional[dict] = None
         self.started_at = time.time()
         self.proc: Optional[subprocess.Popen] = None
         self._lock = threading.Lock()
@@ -348,6 +359,12 @@ class Job:
             retry_match = RETRY_AFTER_RE.search(line)
             if retry_match:
                 self.retry_after = int(retry_match.group("seconds"))
+            outline_match = OUTLINE_RE.search(line)
+            if outline_match:
+                body = outline_match.group("body") or ""
+                self.awaiting_outline = "waiting=1" in body
+                if "confirmed=1" in body or "waiting=0" in body:
+                    self.awaiting_outline = False
 
     def request_cancel(self) -> None:
         self.cancelled = True
@@ -390,6 +407,8 @@ class Job:
                 "retry_after": self.retry_after,
                 "source_type": self.payload.get("source_type"),
                 "paused": self.paused,
+                "awaiting_outline": self.awaiting_outline,
+                "outline": self.outline,
                 "cost": estimate_from_usage(self.usage) if self.usage else None,
                 "started_at": self.started_at,
             }
@@ -444,11 +463,19 @@ class JobManager:
                     "usage": None,
                     "retry_after": None,
                     "paused": False,
+                    "awaiting_outline": False,
+                    "outline": None,
                     "cost": None,
                     "queue": load_queue(self.output_dir),
                 }
             snap = self._job.snapshot(after=after)
             snap["queue"] = load_queue(self.output_dir)
+            loaded = load_outline_gate(self.output_dir)
+            if loaded:
+                self._job.outline = loaded
+                self._job.awaiting_outline = bool(loaded.get("awaiting"))
+                snap["outline"] = loaded
+                snap["awaiting_outline"] = bool(loaded.get("awaiting"))
             return snap
 
     def start(self, payload: dict) -> dict:
@@ -521,6 +548,32 @@ class JobManager:
         resume_process(pid)
         job.append_log("QUICK_STUDY_PAUSE: 0")
         return job.snapshot()
+
+    def outline_snapshot(self) -> dict:
+        loaded = load_outline_gate(self.output_dir) or {}
+        with self._lock:
+            job = self._job
+            running = job is not None and job.status == "running"
+            if job is not None and loaded:
+                job.outline = loaded
+                job.awaiting_outline = bool(loaded.get("awaiting"))
+        return {
+            "ok": bool(loaded),
+            "awaiting": bool(loaded.get("awaiting")) if loaded else False,
+            "running": running,
+            "outline": loaded or None,
+        }
+
+    def confirm_current_outline(self) -> dict:
+        with self._lock:
+            job = self._job
+            if job is None or job.status != "running":
+                raise ValueError("当前没有运行中的任务")
+        payload = confirm_outline(self.output_dir)
+        job.awaiting_outline = False
+        job.outline = payload
+        job.append_log("QUICK_STUDY_OUTLINE: waiting=0 confirmed=1")
+        return self.snapshot()
 
     def history(self, limit: int = 50) -> list[dict]:
         return list_history(self.output_dir, limit=limit)

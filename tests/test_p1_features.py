@@ -93,7 +93,11 @@ def test_dead_markdown_links(tmp_path: Path):
 
 def test_source_and_redact():
     assert unified_source_line("a.py") == "*source: a.py*"
-    assert "blob/HEAD/src/a.py" in (github_blob_url("https://github.com/o/r", "src/a.py") or "")
+    assert github_blob_url("https://github.com/o/r", "src/a.py") is None
+    assert "blob/abc1234/src/a.py" in (
+        github_blob_url("https://github.com/o/r", "src/a.py", sha="abc1234") or ""
+    )
+    assert "HEAD" not in (github_blob_url("https://github.com/o/r", "src/a.py", sha="abc1234") or "")
     assert "***" in redact_text("OPENROUTER_API_KEY=sk-secret")
     assert "sk-secret" not in redact_text("token: abcdefghijklmnop")
 
@@ -182,7 +186,8 @@ def test_mermaid_bindings_and_chapter_page_source(tmp_path: Path):
     (dest / "meta.json").write_text('{"repo_url":"https://github.com/o/r"}', encoding="utf-8")
     client = TestClient(create_app(output_dir=tmp_path / "output", runner=lambda c, o, w: 0, python_exe="python"))
     page = client.get("/t/Demo/01_a.md")
-    assert "github.com/o/r/blob/HEAD" in page.text or "src/a.py" in page.text
+    assert "src/a.py" in page.text
+    assert "/blob/HEAD/" not in page.text
     mapping = mermaid_click_bindings(
         [{"title": "入口", "href": "/t/Demo/01_a.md", "filename": "01_a.md"}]
     )

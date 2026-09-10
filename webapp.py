@@ -139,6 +139,7 @@ class JobIn(BaseModel):
     seed_files: list[str] = Field(default_factory=list)
     queue: bool = False
     retry_chapter: str = ""
+    confirm_outline: bool | None = None
 
 
 class RenameIn(BaseModel):
@@ -430,8 +431,7 @@ def create_app(
         try:
             data = validate_start_request(body.model_dump())
             preview = preview_generation(data)
-            est = (preview.get("estimated_calls") or {}).get("total") or 0
-            preview["cost"] = estimate_preview_calls(est)
+            preview["cost"] = estimate_preview_calls(preview.get("estimated_calls") or {})
             return preview
         except PreviewError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -481,6 +481,17 @@ def create_app(
     def api_resume_job():
         try:
             return manager.resume()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/jobs/current/outline")
+    def api_current_outline():
+        return manager.outline_snapshot()
+
+    @app.post("/api/jobs/current/confirm-outline")
+    def api_confirm_outline():
+        try:
+            return manager.confirm_current_outline()
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -624,14 +635,18 @@ def create_app(
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError):
                 meta = {}
+        from utils.diagram_nodes import load_diagram_nodes
+
         body, page_toc = markdown_to_html(
             text,
             tutorial_name,
             cover=filename == "index.md",
             repo_url=meta.get("repo_url"),
             local_dir=meta.get("local_dir"),
+            sha=meta.get("upstream_commit"),
             return_toc=True,
         )
+        diagram_nodes = load_diagram_nodes(output / tutorial_name, chapters)
         return TEMPLATES.TemplateResponse(
             request,
             "tutorial.html",
@@ -654,6 +669,8 @@ def create_app(
                 "next_smart": recommend_next(output / tutorial_name, filename) if filename != "index.md" else {},
                 "quality": score_tutorial(output / tutorial_name) if filename == "index.md" else {},
                 "stale": stale_status(output / tutorial_name),
+                "diagram_nodes": diagram_nodes,
+                "upstream_commit": meta.get("upstream_commit"),
                 "og_image": og_image_url(meta.get("repo_url")),
                 "week_path": week_path(output / tutorial_name) if filename == "index.md" else {},
                 "i18n": catalog(normalize_ui_lang(request.cookies.get("qs_lang"))),
