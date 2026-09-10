@@ -121,6 +121,10 @@ def mermaid_click_bindings(chapters: list[dict], nodes: list[dict] | None = None
         for item in chapters
         if item.get("filename") not in {None, "index.md"} and item.get("title") and item.get("href")
     }
+    for item in chapters:
+        node_id = item.get("node_id")
+        if node_id and item.get("href"):
+            mapping[str(node_id)] = item["href"]
     for node in nodes or []:
         title = (node.get("title") or "").strip()
         href = node.get("blob") or node.get("href") or mapping.get(title)

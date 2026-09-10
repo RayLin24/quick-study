@@ -6,6 +6,7 @@ from web.bind import token_from_headers
 
 WRITE_PREFIXES = (
     "/api/jobs",
+    "/v1/jobs",
     "/api/hooks",
     "/api/workbench",
 )
@@ -25,6 +26,12 @@ def is_write_path(method: str, path: str) -> bool:
     if method.upper() not in WRITE_METHODS:
         return False
     if path.startswith("/api/tutorials/") and path.rstrip("/").endswith("/ask"):
+        return False
+    if path.startswith("/api/tutorials/") and path.rstrip("/").endswith("/ask/events"):
+        return False
+    if path.startswith("/v1/tutorials/") and path.rstrip("/").endswith("/ask"):
+        return False
+    if path.startswith("/v1/tutorials/") and path.rstrip("/").endswith("/ask/events"):
         return False
     if path.startswith("/api/tutorials/") and "/annotations" in path:
         return False

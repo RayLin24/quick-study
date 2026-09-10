@@ -1004,6 +1004,20 @@ body.a11y-hc {
   --color-accent: #ffff00;
 }
 
+.package-list {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+.package-list li {
+  margin: 4px 0;
+}
+.rewrite-box {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
 @media (prefers-reduced-motion: reduce) {
   button,
   .cards a,

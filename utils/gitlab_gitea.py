@@ -19,6 +19,10 @@ GITEA_RE = re.compile(
     r"^https://gitea\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/?$",
     re.IGNORECASE,
 )
+BITBUCKET_RE = re.compile(
+    r"^https://(?:www\.)?bitbucket\.org/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?/?$",
+    re.IGNORECASE,
+)
 
 
 def allowed_extra_hosts() -> set[str]:
@@ -34,6 +38,8 @@ def classify_repo_url(url: str) -> str | None:
         return "gitlab"
     if GITEA_RE.match(text):
         return "gitea"
+    if BITBUCKET_RE.match(text):
+        return "bitbucket"
     parsed = urlparse(text)
     host = (parsed.hostname or "").lower()
     if host in allowed_extra_hosts() and parsed.scheme == "https":
@@ -62,6 +68,12 @@ def tree_api_url(url: str) -> str | None:
             return f"https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1"
         host = parsed.hostname
         return f"https://{host}/api/v1/repos/{owner}/{repo}/git/trees/HEAD?recursive=1"
+    if kind == "bitbucket" and len(parts) >= 2:
+        owner, repo = parts[0], parts[1].removesuffix(".git")
+        return (
+            f"https://api.bitbucket.org/2.0/repositories/{owner}/{repo}/src/HEAD/"
+            f"?max_depth=10&pagelen=100"
+        )
     return None
 
 
@@ -98,5 +110,11 @@ def fetch_http_tree(url: str, *, token: str | None = None, timeout: float = 20) 
     elif isinstance(data, dict):
         for item in data.get("tree") or []:
             if item.get("type") == "blob" and item.get("path"):
+                paths.append(item["path"])
+        for item in data.get("values") or []:
+            if not isinstance(item, dict) or not item.get("path"):
+                continue
+            kind = item.get("type")
+            if kind in {None, "commit_file", "file", "blob"}:
                 paths.append(item["path"])
     return paths

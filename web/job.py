@@ -16,7 +16,8 @@ from utils.allow_dir import assert_allowed_local_dir
 from utils.budget import BudgetExceeded, assert_budget, record_tokens
 from utils.errors import format_error
 from utils.gitlab_gitea import classify_repo_url
-from utils.job_control import is_paused, pause_process, request_pause, request_resume, resume_process
+from utils.job_control import pause_process, request_pause, request_resume, resume_process
+from utils.pause_semantics import sigstop_opt_in
 from utils.job_history import append_history, list_history
 from utils.job_queue import dequeue, enqueue, load_queue
 from utils.language import DEFAULT_LANGUAGE, normalize_language
@@ -137,8 +138,8 @@ def validate_start_request(payload: dict) -> dict:
         kind = classify_repo_url(repo_url)
         if not kind and not GITHUB_REPO_RE.match(repo_url):
             raise ValueError(
-                "请填写有效的 GitHub / GitLab / Gitea 仓库 URL，例如 https://github.com/owner/repo "
-                "或 https://gitlab.com/group/proj"
+                "请填写有效的 GitHub / GitLab / Gitea / Bitbucket 仓库 URL，例如 https://github.com/owner/repo "
+                "或 https://bitbucket.org/workspace/repo"
             )
         return {
             "source_type": "repo",
@@ -533,7 +534,8 @@ class JobManager:
             job.paused = True
             pid = job.proc.pid if job.proc is not None else None
         request_pause(self.output_dir)
-        pause_process(pid)
+        if sigstop_opt_in():
+            pause_process(pid)
         job.append_log("QUICK_STUDY_PAUSE: 1")
         return job.snapshot()
 

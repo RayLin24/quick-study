@@ -43,6 +43,14 @@ from utils.test_policy import classify_files, policy_markdown
 from utils.tutorial_search import search_tutorials
 from utils.tutorial_tags import list_groups, set_tags
 from utils.week_path import week_path, week_path_markdown
+from utils.rewrite_chapter import list_chapter_abstractions, rewrite_chapter
+from utils.ask_stream import ask_tutorial_stream, sse_line
+from utils.package_picker import join_includes, scan_packages
+from utils.model_presets import compare_preset_costs, recommended_presets
+from utils.docs_drift import plan_docs_drift
+from utils.diagram_click import attach_node_ids
+from utils.v1_openapi import openapi_spec
+from utils.pause_semantics import pause_matrix
 from utils.cost_hint import max_abstractions_cost_hint
 from utils.editor_open import resolve_editor_url
 from utils.graph_color import color_mermaid
@@ -239,6 +247,23 @@ class RetryChapterIn(BaseModel):
     filename: str = ""
 
 
+class RewriteChapterIn(BaseModel):
+    filename: str = ""
+    description: str = ""
+
+
+class PackagesIn(BaseModel):
+    local_dir: str = ""
+    paths: list[str] = Field(default_factory=list)
+    selected: list[dict] = Field(default_factory=list)
+
+
+class DriftIn(BaseModel):
+    tutorial: str = ""
+    changed: list[str] = Field(default_factory=list)
+    event: dict = Field(default_factory=dict)
+
+
 class TagsIn(BaseModel):
     tags: list[str] = Field(default_factory=list)
     group: str = ""
@@ -251,6 +276,7 @@ def create_app(
     python_exe: str | None = None,
     bind_host: str | None = None,
     ask_fn=None,
+    rewrite_call=None,
 ) -> FastAPI:
     output = Path(output_dir or (ROOT / "output"))
     manager = JobManager(
@@ -272,11 +298,16 @@ def create_app(
             app.state.require_auth = not is_loopback_host(host)
         yield
 
-    app = FastAPI(title="Quick Study", lifespan=lifespan)
+    app = FastAPI(
+        title="Quick Study",
+        description="稳定 HTTP 面见 /v1/openapi.json（list/ask/jobs）。/api 为实验面。",
+        lifespan=lifespan,
+    )
     app.state.manager = manager
     app.state.output_dir = output
     app.state.require_auth = False
     app.state.ask_fn = ask_fn or ask_tutorial_detailed
+    app.state.rewrite_call = rewrite_call
     app.state.rate_limiter = limiter_from_env()
 
     static_dir = WEB_DIR / "static"
@@ -480,6 +511,47 @@ def create_app(
             "evidence": {"tutorial": [], "source": [], "layers": ["tutorial"]},
             "retrieval": "bm25",
         }
+
+    @app.post("/api/tutorials/{tutorial_name}/ask/events")
+    def api_ask_events(tutorial_name: str, body: AskIn, request: Request):
+        try:
+            resolve_tutorial_file(output, tutorial_name, "index.md")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=400, detail="还没有生成这篇教程，无法提问。请先生成教程。") from exc
+        folder = output / tutorial_name
+
+        def generate():
+            try:
+                assert_budget(output)
+                actor = actor_id(
+                    token=token_from_headers(request.headers, request.cookies),
+                    session=request.cookies.get("quick_study_token") or "",
+                    ip=request.client.host if request.client else "",
+                )
+                append_audit(output, action="ask_sse", actor=actor, detail={"tutorial": tutorial_name})
+                call = None
+                if app.state.ask_fn is not ask_tutorial_detailed:
+                    def call(prompt, **_kwargs):
+                        raw = app.state.ask_fn(folder, body.question)
+                        if isinstance(raw, AskResult):
+                            return raw.answer
+                        if isinstance(raw, dict):
+                            return raw.get("answer") or ""
+                        return str(raw)
+
+                for event in ask_tutorial_stream(folder, body.question, call=call):
+                    if isinstance(event, dict):
+                        yield sse_line(event)
+            except BudgetExceeded as exc:
+                yield sse_line({"type": "error", "detail": str(exc)})
+            except AskRefused as exc:
+                yield sse_line({"type": "error", "detail": str(exc)})
+            except Exception as exc:
+                yield sse_line({"type": "error", "detail": format_error(exc)})
+
+        return StreamingResponse(generate(), media_type="text/event-stream")
 
     @app.post("/api/jobs/preview")
     def api_preview_job(body: JobIn):
@@ -727,7 +799,12 @@ def create_app(
                 "diagram_nodes": diagram_nodes,
                 "upstream_commit": meta.get("upstream_commit"),
                 "og_image": og_image_url(meta.get("repo_url")),
-                "week_path": week_path(output / tutorial_name) if filename == "index.md" else {},
+                "week_path": week_path(output / tutorial_name, progress=load_progress_file(output), adaptive=True)
+                if filename == "index.md"
+                else {},
+                "chapter_abstractions": list_chapter_abstractions(output / tutorial_name)
+                if filename != "index.md"
+                else [],
                 "i18n": catalog(normalize_ui_lang(request.cookies.get("qs_lang"))),
                 "ui_lang": normalize_ui_lang(request.cookies.get("qs_lang")),
                 "nav_groups": tools_nav(tutorial=tutorial_name),
@@ -891,13 +968,17 @@ def create_app(
             if not verify_github_signature(secret, payload, sig):
                 raise HTTPException(status_code=401, detail="invalid signature")
         event = json.loads(payload.decode("utf-8") or "{}")
-        job = incremental_job_from_push(event)
+        name = ((event.get("repository") or {}).get("name") or "").strip()
+        folder = output / name if name and (output / name / "index.md").is_file() else None
+        plan = plan_docs_drift(folder, event)
+        job = plan.get("job") or incremental_job_from_push(event)
         try:
-            return manager.start(job)
+            started = manager.start(job)
         except JobBusyError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"ok": True, "drift": plan, "job": started}
 
     @app.get("/api/i18n")
     def api_i18n(lang: str = "zh"):
@@ -953,6 +1034,62 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"ok": True, "cleared": cleared, "job": started}
+
+    @app.get("/api/tutorials/{tutorial_name}/chapters")
+    def api_list_chapters(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        return {"items": list_chapter_abstractions(folder)}
+
+    @app.post("/api/tutorials/{tutorial_name}/rewrite-chapter")
+    def api_rewrite_chapter(tutorial_name: str, body: RewriteChapterIn):
+        folder = tutorial_folder(output, tutorial_name)
+        try:
+            result = rewrite_chapter(
+                folder, body.filename, body.description, call=app.state.rewrite_call
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=format_error(exc)) from exc
+        return result
+
+    @app.post("/api/packages")
+    def api_packages(body: PackagesIn):
+        try:
+            if body.paths:
+                items = scan_packages(paths=body.paths)
+            elif body.local_dir:
+                items = scan_packages(body.local_dir)
+            else:
+                items = []
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        selected = body.selected or items
+        return {"items": items, "include": join_includes(selected)}
+
+    @app.get("/api/model-presets")
+    def api_model_presets(max_abstractions: int = 10):
+        return {
+            "items": recommended_presets(),
+            "compare": compare_preset_costs(max_abstractions=max_abstractions),
+            "default_model": "z-ai/glm-5.3-flash",
+        }
+
+    @app.get("/api/jobs/pause-semantics")
+    def api_pause_semantics():
+        return pause_matrix()
+
+    @app.post("/api/docs-drift")
+    def api_docs_drift(body: DriftIn):
+        folder = None
+        if body.tutorial:
+            try:
+                folder = tutorial_folder(output, body.tutorial)
+            except (ValueError, FileNotFoundError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return plan_docs_drift(folder, body.event or None, changed=body.changed or None)
 
     @app.post("/api/compare-repos")
     def api_compare_repos(body: CompareReposIn):
@@ -1067,6 +1204,10 @@ def create_app(
     def v1_ask(tutorial_name: str, body: AskIn, request: Request):
         return api_ask(tutorial_name, body, request)
 
+    @app.post("/v1/tutorials/{tutorial_name}/ask/events")
+    def v1_ask_events(tutorial_name: str, body: AskIn, request: Request):
+        return api_ask_events(tutorial_name, body, request)
+
     @app.post("/v1/jobs")
     def v1_start_job(body: JobIn):
         return api_start_job(body)
@@ -1075,15 +1216,31 @@ def create_app(
     def v1_current_job(after: int | None = None):
         return manager.snapshot(after=after)
 
+    @app.get("/v1/jobs/current/events")
+    async def v1_job_events(after: int = 0):
+        return await api_job_events(after=after)
+
+    @app.post("/v1/jobs/preview")
+    def v1_preview_job(body: JobIn):
+        return api_preview_job(body)
+
+    @app.get("/v1/tutorials/{tutorial_name}/export.zip")
+    def v1_export_zip(tutorial_name: str, request: Request):
+        return api_export_zip(tutorial_name, request)
+
+    @app.get("/v1/openapi.json")
+    def v1_openapi():
+        return openapi_spec()
+
     @app.get("/api/tutorials/{tutorial_name}/exercises")
     def api_exercises(tutorial_name: str):
         folder = tutorial_folder(output, tutorial_name)
         return {"items": tutorial_exercises(folder)}
 
     @app.get("/api/tutorials/{tutorial_name}/week-path")
-    def api_week_path(tutorial_name: str):
+    def api_week_path(tutorial_name: str, adaptive: bool = False):
         folder = tutorial_folder(output, tutorial_name)
-        return week_path(folder)
+        return week_path(folder, progress=load_progress_file(output), adaptive=adaptive)
 
     @app.get("/api/tutorials/{tutorial_name}/week-path.md")
     def api_week_path_md(tutorial_name: str):
@@ -1154,7 +1311,13 @@ def _chapter_links(output_dir: Path, tutorial_name: str) -> list[dict]:
                 "number": number.lstrip("0") or number,
             }
         )
-    return items
+    index_text = ""
+    for name in ("index.md", "README.md"):
+        idx = folder / name
+        if idx.is_file():
+            index_text = idx.read_text(encoding="utf-8")
+            break
+    return attach_node_ids(items, index_text)
 
 
 def _neighbors(chapters: list[dict], filename: str) -> tuple[dict | None, dict | None]:
