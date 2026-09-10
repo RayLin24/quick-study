@@ -50,6 +50,16 @@ def main():
     parser.add_argument("--seed", nargs="+", help="强调阅读的种子文件路径。")
     parser.add_argument("--bilingual", action="store_true", help="章内加另一语言小标题。")
     parser.add_argument("--pagerank-order", action="store_true", help="用入度/PageRank 排章，跳过 LLM 排序。")
+    parser.add_argument(
+        "--confirm-outline",
+        action="store_true",
+        help="Identify+关系+排序后暂停，确认大纲与剩余调用后再并行写章。",
+    )
+    parser.add_argument(
+        "--skip-outline-confirm",
+        action="store_true",
+        help="跳过大纲确认门（默认；CI / 脚本用）。",
+    )
     parser.add_argument("--pr-diff", help="PR diff 文件，生成导读提示后退出。")
     parser.add_argument("--issue-title", default="", help="Issue 标题（配合 --issue-body）。")
     parser.add_argument("--issue-body", default="", help="Issue 正文，生成讨论导读后退出。")
@@ -111,6 +121,7 @@ def main():
         "seed_files": args.seed,
         "bilingual": bool(args.bilingual),
         "pagerank_order": bool(args.pagerank_order),
+        "confirm_outline": bool(args.confirm_outline) and not bool(args.skip_outline_confirm),
         
         # Add use_cache flag (inverse of no-cache flag)
         "use_cache": not args.no_cache,

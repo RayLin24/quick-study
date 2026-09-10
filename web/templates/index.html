@@ -108,6 +108,10 @@
           PageRank 排章
         </label>
         <label class="choice">
+          <input type="checkbox" id="confirm_outline" name="confirm_outline" checked>
+          大纲确认后再写章（预检不够）
+        </label>
+        <label class="choice">
           <input type="checkbox" id="auto-open">
           成功后自动打开教程
         </label>
@@ -128,6 +132,7 @@
 
         <p id="form-error" class="error" hidden></p>
         <div id="preview-card" class="preview-card" hidden></div>
+        <div id="outline-card" class="preview-card" hidden></div>
         <div class="actions">
           <button type="button" id="preview-btn">预检（只爬不写）</button>
           <button type="submit" id="submit-btn">确认生成</button>
@@ -171,7 +176,7 @@
       <h2 id="log-title">运行日志</h2>
         <p id="job-status" class="status">空闲</p>
       <div id="step-progress" class="step-progress" hidden>
-        <div class="step-bar" role="progressbar" aria-valuemin="0" aria-valuemax="6" aria-valuenow="0">
+        <div class="step-bar" role="progressbar" aria-valuemin="0" aria-valuemax="7" aria-valuenow="0">
           <span class="step-bar-fill" id="step-bar-fill"></span>
         </div>
         <ol class="step-list" id="step-list">
@@ -179,6 +184,7 @@
           <li data-step="identify">Identify 识别</li>
           <li data-step="relationships">Relationships 关系</li>
           <li data-step="order">Order 排序</li>
+          <li data-step="outline">Outline 确认</li>
           <li data-step="write">Write 写章</li>
           <li data-step="combine">Combine 汇总</li>
         </ol>

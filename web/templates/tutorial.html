@@ -148,6 +148,7 @@
   </div>
 
   <script id="chapter-nav" type="application/json">{{ chapters | tojson }}</script>
+  <script id="diagram-nodes" type="application/json">{{ diagram_nodes | default([]) | tojson }}</script>
   <section class="reader-tools" aria-label="阅读工具">
     <label class="field">
       <span>页内批注</span>
@@ -171,24 +172,59 @@
     hljs.highlightAll();
     function bindMermaidChapterClicks() {
       const raw = document.getElementById("chapter-nav");
+      const nodeRaw = document.getElementById("diagram-nodes");
       if (!raw) return;
       let chapters = [];
+      let diagramNodes = [];
       try { chapters = JSON.parse(raw.textContent || "[]"); } catch { return; }
+      try { diagramNodes = JSON.parse((nodeRaw && nodeRaw.textContent) || "[]"); } catch { diagramNodes = []; }
       const byTitle = {};
+      const byId = {};
       chapters.forEach((ch) => {
         if (ch.filename && ch.filename !== "index.md" && ch.title) {
-          byTitle[String(ch.title).trim()] = ch.href;
+          byTitle[String(ch.title).trim()] = { href: ch.href, blob: null, files: [] };
         }
       });
+      (diagramNodes || []).forEach((item) => {
+        const title = String(item.title || "").trim();
+        const rec = {
+          href: item.blob || item.href || (title && byTitle[title] && byTitle[title].href) || "",
+          blob: item.blob || null,
+          chapter: item.chapter || (title && byTitle[title] && byTitle[title].href) || "",
+          files: item.files || [],
+        };
+        if (title) byTitle[title] = rec;
+        if (item.id) byId[item.id] = rec;
+      });
+      function resolveNode(node) {
+        const id = node.id || "";
+        const idMatch = id.match(/\bA\d+\b/);
+        if (idMatch && byId[idMatch[0]]) return byId[idMatch[0]];
+        const label = (node.textContent || "").trim().split("\n")[0].trim();
+        if (byTitle[label]) return byTitle[label];
+        const firstLine = label.split(/\s{2,}/)[0];
+        return byTitle[firstLine] || null;
+      }
       document.querySelectorAll(".mermaid .node").forEach((node) => {
-        const label = (node.textContent || "").trim();
-        const href = byTitle[label];
-        if (!href) return;
+        const rec = resolveNode(node);
+        if (!rec) return;
+        const blob = rec.blob;
+        const chapter = rec.chapter || rec.href;
+        const target = blob || chapter;
+        if (!target) return;
         node.style.cursor = "pointer";
         node.setAttribute("tabindex", "0");
-        node.setAttribute("data-chapter-href", href);
-        const go = () => { window.location.href = href; };
-        node.addEventListener("click", (ev) => { ev.preventDefault(); go(); });
+        if (rec.files && rec.files.length) node.setAttribute("data-files", rec.files.join(","));
+        if (blob) node.setAttribute("data-blob-href", blob);
+        if (chapter) node.setAttribute("data-chapter-href", chapter);
+        const go = () => {
+          if (blob && /^https?:\/\//.test(blob)) {
+            window.open(blob, "_blank", "noopener,noreferrer");
+            return;
+          }
+          if (chapter) window.location.href = chapter;
+        };
+        node.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); go(); });
         node.addEventListener("keydown", (ev) => {
           if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); go(); }
         });
@@ -218,10 +254,13 @@
       bindMermaidChapterClicks();
       document.querySelectorAll(".mermaid").forEach((node) => {
         if (!node.querySelector("svg")) {
-          const pre = document.createElement("pre");
-          pre.className = "mermaid-fallback";
-          pre.textContent = node.textContent;
-          node.replaceWith(pre);
+          node.classList.add("mermaid-error");
+          if (!node.querySelector(".mermaid-error-note")) {
+            const note = document.createElement("p");
+            note.className = "mermaid-error-note";
+            note.textContent = "结构图未能编译，已保留源码（未静默丢弃）。";
+            node.appendChild(note);
+          }
         }
       });
       document.querySelectorAll(".copy-path").forEach((btn) => {

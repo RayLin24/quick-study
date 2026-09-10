@@ -60,7 +60,7 @@ def test_fetch_repo_allows_over_threshold_when_include_specified(monkeypatch):
             "include_specified": True,
         }
     )
-    assert len(result) == 81
+    assert len(result["files"]) == 81
 
 
 def test_fetch_repo_uses_repo_name_not_tree_tail():

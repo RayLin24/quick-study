@@ -5,6 +5,7 @@ from nodes import (
     IdentifyAbstractions,
     AnalyzeRelationships,
     OrderChapters,
+    ConfirmOutline,
     WriteChapters,
     CombineTutorial
 )
@@ -21,6 +22,7 @@ def create_tutorial_flow():
     identify_abstractions = IdentifyAbstractions(max_retries=3, wait=10)
     analyze_relationships = AnalyzeRelationships(max_retries=3, wait=10)
     order_chapters = OrderChapters(max_retries=3, wait=10)
+    confirm_outline = ConfirmOutline()
     write_chapters = WriteChapters(max_retries=3, wait=10)
     combine_tutorial = CombineTutorial()
 
@@ -28,7 +30,8 @@ def create_tutorial_flow():
     fetch_repo >> identify_abstractions
     identify_abstractions >> analyze_relationships
     analyze_relationships >> order_chapters
-    order_chapters >> write_chapters
+    order_chapters >> confirm_outline
+    confirm_outline >> write_chapters
     write_chapters >> combine_tutorial
 
     # Create the flow starting with FetchRepo

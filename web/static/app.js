@@ -11,9 +11,10 @@ const stepProgress = document.getElementById("step-progress");
 const stepBarFill = document.getElementById("step-bar-fill");
 const stepList = document.getElementById("step-list");
 const previewCard = document.getElementById("preview-card");
+const outlineCard = document.getElementById("outline-card");
 const replaceBtn = document.getElementById("replace-btn");
 
-const STEP_ORDER = ["fetch", "identify", "relationships", "order", "write", "combine"];
+const STEP_ORDER = ["fetch", "identify", "relationships", "order", "outline", "write", "combine"];
 
 let eventSource = null;
 let logCursor = 0;
@@ -265,6 +266,7 @@ function connectEvents(after) {
       return;
     }
     if (payload.type === "heartbeat") {
+      maybeShowOutline();
       return;
     }
     if (payload.type === "log") {
@@ -275,6 +277,9 @@ function connectEvents(after) {
       } else {
         const match = /QUICK_STUDY_STEP:\s*(\w+)/.exec(payload.line || "");
         if (match) setStep(match[1]);
+      }
+      if (/QUICK_STUDY_OUTLINE:/.test(payload.line || "") || payload.step === "outline") {
+        maybeShowOutline();
       }
     }
     if (payload.type === "done") {
@@ -361,6 +366,7 @@ function jobBody() {
     pagerank_order: !!(form.pagerank_order && form.pagerank_order.checked),
     learning_goal: form.learning_goal ? form.learning_goal.value.trim() : "",
     replace: false,
+    confirm_outline: !!(form.confirm_outline && form.confirm_outline.checked),
   };
 }
 
@@ -403,6 +409,64 @@ function showPreview(data) {
   const hint = document.createElement("p");
   hint.textContent = data.ok ? "确认无误后点「确认生成」。" : "缩小 include 后再预检。";
   previewCard.appendChild(hint);
+}
+
+function showOutlineGate(outline) {
+  if (!outlineCard || !outline) return;
+  outlineCard.hidden = false;
+  outlineCard.className = "preview-card";
+  outlineCard.innerHTML = "";
+  const title = document.createElement("strong");
+  title.textContent = "大纲确认（写章前）";
+  outlineCard.appendChild(title);
+  const info = document.createElement("p");
+  const remaining = (outline.remaining_calls || {}).remaining;
+  const est = outline.estimated_calls || {};
+  info.textContent = [
+    `${outline.chapter_count ?? (outline.abstractions || []).length} 个抽象`,
+    remaining != null ? `剩余写章调用 ${remaining}` : null,
+    est.total != null ? `全程估调用 ${est.total}` : null,
+  ].filter(Boolean).join(" · ");
+  outlineCard.appendChild(info);
+  const list = document.createElement("ol");
+  list.className = "preview-files";
+  (outline.abstractions || []).forEach((item) => {
+    const li = document.createElement("li");
+    li.textContent = `${item.name || "?"} — ${item.description || ""}`;
+    list.appendChild(li);
+  });
+  outlineCard.appendChild(list);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = "确认大纲，开始写章";
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/jobs/current/confirm-outline", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "确认失败");
+      outlineCard.hidden = true;
+      setStatus("写章中…");
+    } catch (err) {
+      btn.disabled = false;
+      setError(err.message);
+    }
+  });
+  outlineCard.appendChild(btn);
+}
+
+async function maybeShowOutline() {
+  try {
+    const res = await fetch("/api/jobs/current/outline");
+    const data = await res.json();
+    if (data && data.awaiting && data.outline) {
+      setStep("outline");
+      setStatus("等待大纲确认");
+      showOutlineGate(data.outline);
+    }
+  } catch {
+    // ignore
+  }
 }
 
 async function runPreview() {

@@ -3,6 +3,8 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
+import json
+
 from utils.ask_tutorial import HEADING_RE
 from web.render import markdown_to_html
 
@@ -17,6 +19,13 @@ def build_offline_html(folder: Path) -> str:
         "h1,h2{border-bottom:1px solid #eee}</style></head><body>",
         f"<h1>{html.escape(root.name)}（单文件离线）</h1><nav>",
     ]
+    meta = {}
+    meta_path = root / "meta.json"
+    if meta_path.is_file():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            meta = {}
     chapters = sorted(root.glob("*.md"))
     for path in chapters:
         text = path.read_text(encoding="utf-8")
@@ -26,7 +35,14 @@ def build_offline_html(folder: Path) -> str:
     parts.append("</nav>")
     for path in chapters:
         text = path.read_text(encoding="utf-8")
-        body, _toc = markdown_to_html(text, root.name, cover=path.name == "index.md", return_toc=True)
+        body, _toc = markdown_to_html(
+            text,
+            root.name,
+            cover=path.name == "index.md",
+            repo_url=meta.get("repo_url"),
+            sha=meta.get("upstream_commit"),
+            return_toc=True,
+        )
         parts.append(f"<section id='{html.escape(path.stem)}'>")
         parts.append(body)
         parts.append("</section>")
