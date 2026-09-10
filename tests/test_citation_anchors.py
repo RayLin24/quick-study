@@ -29,7 +29,8 @@ def _chapters():
 
 def test_23_routing_picks_auth_not_decoy():
     chapters = _chapters()
-    selected, routed = select_ask_chapters(chapters, "JWT 鉴权怎么校验", top_k=1, max_chars=20000)
+    # Current scorer is title + *source:* path (PR #11 BM25 is not on main).
+    selected, routed = select_ask_chapters(chapters, "鉴权中间件 src/auth.py", top_k=1, max_chars=20000)
     assert routed
     assert selected[0].filename == "02_auth.md"
 
@@ -69,7 +70,7 @@ def test_23_ask_detailed_mock_llm(tmp_path: Path):
         assert "选中章节" in prompt or "教程" in prompt
         return "入口在 [鉴权中间件](02_auth.md#动机)"
 
-    result = ask_tutorial_detailed(folder, "JWT 鉴权怎么校验", call=fake, top_k=1)
+    result = ask_tutorial_detailed(folder, "鉴权中间件 src/auth.py", call=fake, top_k=1)
     assert result.used_chapters[0]["filename"] == "02_auth.md"
     assert result.citations
     assert result.citations[0]["href"].startswith("/t/Demo/02_auth.md")
