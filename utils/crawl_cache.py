@@ -61,3 +61,52 @@ def load_crawl_cache(payload: dict, *, max_age: float | None = None) -> list | N
     if not isinstance(files, list):
         return None
     return [(item[0], item[1]) for item in files if isinstance(item, list) and len(item) == 2]
+
+
+def _norm_rel(path: str) -> str:
+    text = (path or "").strip().replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text.lstrip("/")
+
+
+def load_cached_file_map(*, max_age: float | None = None) -> dict[str, str]:
+    """Scan crawl_cache entries. Newest file for a relative path wins. No embeddings."""
+    cache_dir = CACHE_DIR
+    if not cache_dir.is_dir():
+        return {}
+    limit = MAX_AGE if max_age is None else max_age
+    now = time.time()
+    ranked: list[tuple[float, dict[str, str]]] = []
+    for path in cache_dir.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        saved_at = float(data.get("saved_at") or 0)
+        if limit >= 0 and now - saved_at > limit:
+            continue
+        files = data.get("files")
+        if not isinstance(files, list):
+            continue
+        mapping: dict[str, str] = {}
+        for item in files:
+            if not isinstance(item, list) or len(item) < 2:
+                continue
+            rel = _norm_rel(str(item[0]))
+            if rel:
+                mapping[rel] = str(item[1])
+        if mapping:
+            ranked.append((saved_at, mapping))
+    ranked.sort(key=lambda pair: pair[0])
+    merged: dict[str, str] = {}
+    for _, mapping in ranked:
+        merged.update(mapping)
+    return merged
+
+
+def lookup_cached_file(rel_path: str, *, max_age: float | None = None) -> str | None:
+    target = _norm_rel(rel_path)
+    if not target:
+        return None
+    return load_cached_file_map(max_age=max_age).get(target)

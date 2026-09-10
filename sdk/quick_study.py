@@ -38,8 +38,12 @@ class QuickStudy:
     def list_tutorials(self) -> list[dict]:
         return self._request("GET", "/v1/tutorials").get("items") or []
 
-    def ask(self, tutorial: str, question: str) -> dict:
-        return self._request("POST", f"/v1/tutorials/{tutorial}/ask", {"question": question})
+    def ask(self, tutorial: str, question: str, *, include_source: bool = False) -> dict:
+        return self._request(
+            "POST",
+            f"/v1/tutorials/{tutorial}/ask",
+            {"question": question, "include_source": include_source},
+        )
 
     def generate(self, **payload) -> dict:
         return self._request("POST", "/v1/jobs", payload)

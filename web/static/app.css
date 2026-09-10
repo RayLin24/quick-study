@@ -369,6 +369,38 @@ button:disabled {
   margin-top: 8px;
 }
 
+.ask-evidence-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.evidence-tag {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.evidence-tutorial {
+  background: #dbeafe;
+  color: #1e3a8a;
+}
+
+.evidence-source {
+  background: #ccfbf1;
+  color: #115e59;
+}
+
+.evidence-heading {
+  margin: 12px 0 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .mermaid-fallback {
   white-space: pre-wrap;
   padding: 12px;

@@ -5,6 +5,15 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from utils.ask_retrieve import bm25_chapter_scores, token_hit_tokens
+from utils.ask_source_snippets import (
+    LAYER_SOURCE,
+    LAYER_TUTORIAL,
+    collect_source_snippets,
+    format_source_evidence,
+    source_snippets_enabled,
+    tutorial_evidence,
+)
 from utils.call_llm import call_llm
 from utils.errors import format_error
 
@@ -51,6 +60,10 @@ class AskResult:
     markdown: str = ""
     degraded: bool = False
     attempts: int = 1
+    source_snippets: list[dict] = field(default_factory=list)
+    include_source: bool = False
+    evidence: dict = field(default_factory=dict)
+    retrieval: str = "bm25"
 
 
 def _tutorial_index(folder: Path) -> Path | None:
@@ -109,11 +122,11 @@ def collect_tutorial_bundle(folder: Path) -> dict:
 
 
 def _tokens(text: str) -> set[str]:
-    return {part.lower() for part in TOKEN_RE.findall(text or "") if part.strip()}
+    return token_hit_tokens(text)
 
 
 def score_chapter(chapter: ChapterDoc, question: str) -> int:
-    """Score by title + source path overlap. No embeddings."""
+    """Baseline token-hit: title + source path overlap only. No body, no BM25."""
     needles = _tokens(question)
     if not needles:
         return 0
@@ -140,7 +153,7 @@ def select_ask_chapters(
     top_k: int | None = None,
     max_chars: int | None = None,
 ) -> tuple[list[ChapterDoc], bool]:
-    """Pick chapters by title/source score. Never dump the whole book when over limit."""
+    """Pick chapters by BM25 (body + title + paths). Never dump the whole book when over limit."""
     k = max(1, int(top_k if top_k is not None else ASK_TOP_K))
     budget = int(max_chars if max_chars is not None else ASK_MAX_CHARS)
     if not chapters:
@@ -149,9 +162,12 @@ def select_ask_chapters(
     if total <= budget and len(chapters) <= k:
         return list(chapters), False
 
+    bm25_scores = bm25_chapter_scores(chapters, question)
+    by_id = {id(ch): score for ch, score in zip(chapters, bm25_scores)}
     scored = sorted(
         chapters,
         key=lambda ch: (
+            by_id.get(id(ch), 0.0),
             score_chapter(ch, question),
             1 if ch.filename in INDEX_FILENAMES else 0,
             -ch.chars,
@@ -184,7 +200,14 @@ def select_ask_chapters(
     return selected, routed
 
 
-def build_ask_prompt(bundle: dict, question: str, selected: list[ChapterDoc] | None = None) -> str:
+def build_ask_prompt(
+    bundle: dict,
+    question: str,
+    selected: list[ChapterDoc] | None = None,
+    *,
+    source_snippets: list[dict] | None = None,
+    include_source: bool = False,
+) -> str:
     chapters = selected if selected is not None else bundle.get("chapters") or []
     toc_lines = []
     for ch in bundle.get("chapters") or []:
@@ -193,14 +216,32 @@ def build_ask_prompt(bundle: dict, question: str, selected: list[ChapterDoc] | N
     source_set = sorted({src for ch in chapters for src in ch.sources}) or bundle.get("sources") or []
     source_lines = "\n".join(f"- {path}" for path in source_set) or "- （教程正文未标注 # source: 路径）"
     bodies = "\n\n".join(f"## file: {ch.filename}\n{ch.text}" for ch in chapters)
+    snippets = source_snippets or []
+    source_block = format_source_evidence(snippets)
+    if source_block:
+        source_section = f"""证据层 · 源码（可选片段，每章最多 N 行，来自 *source:，不是全文 RAG）：
+{source_block}
+"""
+        source_rule = "- 「源码」层只是 Top-K 章节 *source: 的短片段；不要把它当成整仓检索。"
+    elif include_source:
+        source_section = "证据层 · 源码：已开启，但未能从 crawl_cache / 本地读到 *source: 片段。\n"
+        source_rule = "- 「源码」层已开启但没有片段；不要编造源码。"
+    else:
+        source_section = "证据层 · 源码：未启用（默认关闭）。只使用教程正文和路径标注。\n"
+        source_rule = "- 默认不附带源文件正文。不要编造未给出的源码内容。"
     return f"""你是 Quick Study 的教程问答助手。只能根据下面已经生成的教程 Markdown，以及其中标注的源码路径回答。
+
+证据分层：
+- 教程：已生成的章节 Markdown（主依据）
+- 源码：可选，章节 `*source:` 路径的短片段（默认关闭，无向量库）
 
 规则：
 - 不要使用教程以外的知识，不要检索、不要编造仓库里没有出现的文件。
 - 可以引用教程章节标题，以及文中的 `# source:` / `*source:` 路径。
 - 如果教程里没有写到，明确回答「教程里没有提到」，不要猜测。
 - 用与问题相同的语言回答。
-- 下面「选中章节」才是正文；目录仅用于定位，不要把未选中的章当成已读。
+- 下面「证据层 · 教程」才是正文；目录仅用于定位，不要把未选中的章当成已读。
+{source_rule}
 
 全部章节目录：
 {toc}
@@ -208,9 +249,10 @@ def build_ask_prompt(bundle: dict, question: str, selected: list[ChapterDoc] | N
 已标注的源码路径（选自本次纳入的章节）：
 {source_lines}
 
-选中章节正文：
+证据层 · 教程（选中章节正文）：
 {bodies}
 
+{source_section}
 问题：
 {question}
 """
@@ -223,6 +265,32 @@ def _invoke_ask(caller, prompt: str):
         return caller(prompt, use_cache=False, temperature=0.2)
 
 
+def _attach_snippets(
+    selected: list[ChapterDoc],
+    question: str,
+    folder: Path,
+    *,
+    include_source: bool,
+    files_map: dict[str, str] | None,
+    max_snippet_lines: int | None,
+) -> list[dict]:
+    if not include_source:
+        return []
+    return collect_source_snippets(
+        selected,
+        question,
+        folder=folder,
+        files_map=files_map,
+        max_lines=max_snippet_lines,
+    )
+
+
+def _result_markdown(answer: str, snippets: list[dict]) -> str:
+    if not snippets:
+        return answer
+    return f"{answer}\n\n## 源码片段\n\n{format_source_evidence(snippets)}"
+
+
 def ask_tutorial_detailed(
     folder: Path,
     question: str,
@@ -230,6 +298,9 @@ def ask_tutorial_detailed(
     call=None,
     top_k: int | None = None,
     max_chars: int | None = None,
+    include_source: bool | None = None,
+    files_map: dict[str, str] | None = None,
+    max_snippet_lines: int | None = None,
 ) -> AskResult:
     q = (question or "").strip()
     if not q:
@@ -238,8 +309,14 @@ def ask_tutorial_detailed(
     chapters: list[ChapterDoc] = bundle["chapters"]
     budget = int(max_chars if max_chars is not None else ASK_MAX_CHARS)
     k = top_k
+    want_source = source_snippets_enabled(include_source)
     selected, routed = select_ask_chapters(chapters, q, top_k=k, max_chars=budget)
-    prompt = build_ask_prompt(bundle, q, selected)
+    snippets = _attach_snippets(
+        selected, q, Path(folder), include_source=want_source, files_map=files_map, max_snippet_lines=max_snippet_lines
+    )
+    prompt = build_ask_prompt(
+        bundle, q, selected, source_snippets=snippets, include_source=want_source
+    )
     caller = call or call_llm
     degraded = False
     attempts = 1
@@ -249,30 +326,44 @@ def ask_tutorial_detailed(
         # Feature 3: shrink context and retry once.
         smaller = max(1200, budget // 3)
         selected, routed = select_ask_chapters(chapters, q, top_k=1, max_chars=smaller)
-        prompt = build_ask_prompt(bundle, q, selected)
+        snippets = _attach_snippets(
+            selected, q, Path(folder), include_source=want_source, files_map=files_map, max_snippet_lines=max_snippet_lines
+        )
+        prompt = build_ask_prompt(
+            bundle, q, selected, source_snippets=snippets, include_source=want_source
+        )
         try:
             answer = _invoke_ask(caller, prompt)
             degraded = True
             attempts = 2
         except Exception:
             raise first
-    used = [{"filename": ch.filename, "title": ch.title} for ch in selected]
+    used = [{"filename": ch.filename, "title": ch.title, "layer": LAYER_TUTORIAL} for ch in selected]
     from utils.ask_citations import extract_citations, used_chapter_citations
 
     citations = extract_citations(answer, chapters, tutorial_name=Path(folder).name)
     if not citations:
         citations = used_chapter_citations(used, Path(folder).name, chapters)
+    evidence = {
+        "tutorial": tutorial_evidence(used),
+        "source": snippets,
+        "layers": [LAYER_TUTORIAL] + ([LAYER_SOURCE] if snippets else []),
+    }
     return AskResult(
         answer=answer,
         used_chapters=used,
         routed=routed,
         top_k=len(selected),
         citations=citations,
-        markdown=answer,
+        markdown=_result_markdown(answer, snippets),
         degraded=degraded,
         attempts=attempts,
+        source_snippets=snippets,
+        include_source=want_source,
+        evidence=evidence,
+        retrieval="bm25",
     )
 
 
-def ask_tutorial(folder: Path, question: str, *, call=None) -> str:
-    return ask_tutorial_detailed(folder, question, call=call).answer
+def ask_tutorial(folder: Path, question: str, *, call=None, include_source: bool | None = None) -> str:
+    return ask_tutorial_detailed(folder, question, call=call, include_source=include_source).answer
