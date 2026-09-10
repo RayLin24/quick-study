@@ -362,7 +362,62 @@ button:disabled {
 .export-nav {
   margin-left: auto;
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 12px;
+}
+
+.tools-drawer {
+  position: relative;
+}
+
+.tools-drawer > summary {
+  cursor: pointer;
+  list-style: none;
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+.tools-drawer > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tools-drawer-panel {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px 20px;
+  min-width: min(520px, 90vw);
+  margin-top: 8px;
+  padding: 16px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.tools-drawer-panel h3 {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+  color: var(--color-secondary);
+  font-weight: 600;
+}
+
+.tools-drawer-panel ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tools-drawer-panel li {
+  margin: 0 0 6px;
+}
+
+.tools-layout {
+  grid-template-columns: 1fr;
+  max-width: 860px;
 }
 
 .ask-used {

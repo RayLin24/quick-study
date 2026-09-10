@@ -442,7 +442,12 @@ def _blocking_chat_completion(url, headers, payload) -> str:
         raise Exception(error_message)
 
 
-def _call_llm_provider(prompt: str, progress: _Progress, temperature: float = 0.7) -> str:
+def _call_llm_provider(
+    prompt: str,
+    progress: _Progress,
+    temperature: float = 0.7,
+    system: str | None = None,
+) -> str:
     """
     Call an OpenAI-compatible chat completions API.
 
@@ -490,9 +495,13 @@ def _call_llm_provider(prompt: str, progress: _Progress, temperature: float = 0.
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    messages = []
+    if system:
+        messages.append({"role": "system", "content": system})
+    messages.append({"role": "user", "content": prompt})
     payload = {
         "model": model,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
         "temperature": temperature,
     }
 
@@ -553,13 +562,15 @@ def call_llm(
     progress_label: str = None,
     temperature: float = 0.7,
     stage: str | None = None,
+    system: str | None = None,
 ) -> str:
     logger.info(_prompt_log_text(prompt))
     _current_stage.value = stage
+    cache_input = prompt if not system else f"<<SYS>>\n{system}\n<</SYS>>\n{prompt}"
 
     # Check cache if enabled
     if use_cache:
-        cached = load_cache(prompt)
+        cached = load_cache(cache_input)
         if cached is not None:
             logger.info(f"RESPONSE: {cached}")
             if progress_label:
@@ -569,9 +580,12 @@ def call_llm(
     progress = _Progress(progress_label)
     provider = get_llm_provider()
     if provider == "GEMINI":
-        response_text = _call_llm_gemini(prompt)
+        gemini_prompt = f"{system}\n\n{prompt}" if system else prompt
+        response_text = _call_llm_gemini(gemini_prompt)
     else:
-        response_text = _call_llm_provider(prompt, progress, temperature=temperature)
+        response_text = _call_llm_provider(
+            prompt, progress, temperature=temperature, system=system
+        )
     progress.done()
 
     # Log the response
@@ -582,7 +596,7 @@ def call_llm(
 
     # Update cache if enabled
     if use_cache:
-        save_cache(prompt, response_text)
+        save_cache(cache_input, response_text)
 
     _emit(usage_meter.format_line())
     _current_stage.value = None

@@ -12,6 +12,22 @@
     <a class="brand" href="/">Quick Study</a>
     <p class="tag" data-i18n="tag">把代码库变成可读教程</p>
     <nav class="export-nav" aria-label="工具">
+      <details class="tools-drawer" id="tools-drawer">
+        <summary>工具</summary>
+        <div class="tools-drawer-panel">
+          {% for group in nav_groups or [] %}
+          <section>
+            <h3>{{ group.label }}</h3>
+            <ul>
+              {% for item in group.links %}
+              <li><a href="{{ item.href }}">{{ item.label }}</a></li>
+              {% endfor %}
+            </ul>
+          </section>
+          {% endfor %}
+        </div>
+      </details>
+      <a href="/tools">全部工具</a>
       <a href="/jobs">任务历史</a>
       <a href="/feed.xml">Atom</a>
       <button type="button" id="lang-toggle" data-lang="{{ ui_lang or 'zh' }}">{{ 'English' if ui_lang == 'en' else '中文' }}</button>

@@ -37,6 +37,12 @@ def classify_repo_url(url: str) -> str | None:
     parsed = urlparse(text)
     host = (parsed.hostname or "").lower()
     if host in allowed_extra_hosts() and parsed.scheme == "https":
+        from utils.clone_guard import CloneRefused, assert_safe_clone_url
+
+        try:
+            assert_safe_clone_url(text)
+        except CloneRefused:
+            return None
         return "gitea"
     return None
 
@@ -60,6 +66,9 @@ def tree_api_url(url: str) -> str | None:
 
 
 def clone_http_repo(url: str, dest: str | Path, *, token: str | None = None) -> Path:
+    from utils.clone_guard import assert_safe_clone_url
+
+    assert_safe_clone_url(url)
     target = Path(dest)
     target.mkdir(parents=True, exist_ok=True)
     clone_url = url

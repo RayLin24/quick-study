@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>工具 · Quick Study</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">Quick Study</a>
+    <p class="tag">工作台 / 对比 / Digest / PR / 质量</p>
+    <nav class="export-nav" aria-label="工具">
+      <a href="/">生成</a>
+      <a href="/jobs">任务历史</a>
+    </nav>
+  </header>
+  <main class="layout tools-layout">
+    <section class="panel" id="workbench">
+      <h1>工作台</h1>
+      <p class="ask-hint">保存常用仓库，一键填回生成表单。</p>
+      <label class="field"><span>仓库 URL</span><input id="wb-url" type="url" placeholder="https://github.com/owner/repo"></label>
+      <label class="field"><span>名称（可选）</span><input id="wb-name" type="text"></label>
+      <label class="field"><span>include（可选）</span><input id="wb-include" type="text" placeholder="*.py"></label>
+      <button type="button" id="wb-add">加入工作台</button>
+      <ul id="wb-list" class="cards"></ul>
+    </section>
+
+    <section class="panel" id="presets">
+      <h2>预设</h2>
+      <p class="ask-hint">读取已保存的生成参数 JSON。</p>
+      <ul id="preset-list" class="cards"></ul>
+    </section>
+
+    <section class="panel" id="compare">
+      <h2>两仓对比</h2>
+      <label class="field"><span>左侧抽象（每行一个名字）</span><textarea id="cmp-left" rows="5"></textarea></label>
+      <label class="field"><span>右侧抽象</span><textarea id="cmp-right" rows="5"></textarea></label>
+      <button type="button" id="cmp-run">对比</button>
+      <pre id="cmp-out" class="log"></pre>
+    </section>
+
+    <section class="panel" id="digest">
+      <h2>Digest</h2>
+      <label class="field"><span>文件（JSON 数组：path + content）</span><textarea id="digest-in" rows="6" placeholder='[{"path":"main.py","content":"print(1)"}]'></textarea></label>
+      <button type="button" id="digest-run">生成 Digest</button>
+      <pre id="digest-out" class="log"></pre>
+    </section>
+
+    <section class="panel" id="pr">
+      <h2>PR 导读</h2>
+      <label class="field"><span>标题</span><input id="pr-title" type="text" value="PR"></label>
+      <label class="field"><span>diff</span><textarea id="pr-diff" rows="6"></textarea></label>
+      <button type="button" id="pr-run">生成导读 prompt</button>
+      <pre id="pr-out" class="log"></pre>
+    </section>
+
+    <section class="panel" id="quality">
+      <h2>质量 / 热力图 / Pages</h2>
+      <label class="field">
+        <span>教程</span>
+        <select id="tool-tutorial">
+          <option value="">选择已生成教程</option>
+          {% for item in tutorials %}
+          <option value="{{ item.name }}">{{ item.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <div class="actions">
+        <button type="button" data-tool="quality">质量评分</button>
+        <button type="button" data-tool="heatmap">热力图</button>
+        <button type="button" data-tool="glossary">术语表</button>
+        <button type="button" data-tool="week">一周路径</button>
+        <button type="button" data-tool="pages">生成 Pages</button>
+        <a id="pages-zip" href="#">下载 Pages zip</a>
+      </div>
+      <pre id="quality-out" class="log"></pre>
+    </section>
+  </main>
+  <script src="/static/tools.js"></script>
+</body>
+</html>

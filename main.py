@@ -174,11 +174,45 @@ def main():
     except Exception:
         pass
 
-if __name__ == "__main__":
+def _main_pages(argv: list[str] | None = None) -> int:
+    from pathlib import Path
+
+    from utils.pages_site import build_pages_site, pages_file_list
+
+    parser = argparse.ArgumentParser(prog="quick-study pages", description="写出 GitHub Pages 静态站。")
+    parser.add_argument("tutorial", help="output/ 下的教程目录名")
+    parser.add_argument("-o", "--output", default="output")
+    args = parser.parse_args(argv)
+    folder = Path(args.output) / args.tutorial
+    if not folder.is_dir():
+        print(f"找不到教程目录: {folder}")
+        return 2
+    dest = build_pages_site(folder)
+    print(dest)
+    print("\n".join(pages_file_list(dest)))
+    return 0
+
+
+def cli(argv: list[str] | None = None) -> int:
+    """pip / console entry: generate, ask, pages, mcp."""
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "ask":
+    args = list(sys.argv[1:] if argv is None else argv)
+    if args and args[0] == "ask":
         from utils.ask_cli import main_ask
 
-        raise SystemExit(main_ask(sys.argv[2:]))
+        return main_ask(args[1:])
+    if args and args[0] == "pages":
+        return _main_pages(args[1:])
+    if args and args[0] == "mcp":
+        from mcp_server import main as mcp_main
+
+        return mcp_main(args[1:])
+    if argv is not None:
+        sys.argv = ["quick-study", *args]
     main()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

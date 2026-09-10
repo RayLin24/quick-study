@@ -387,9 +387,25 @@ class IdentifyAbstractions(Node):
             )
         from utils.learning_goal import learning_goal_block
         from utils.seed_files import seed_prompt_block
+        from utils.resume import tutorial_dir
+        from utils.step_cache import (
+            IDENTIFY,
+            content_key,
+            identify_extra,
+            load_step,
+            use_step_cache,
+        )
 
         self._learning_goal_block = learning_goal_block(shared.get("learning_goal"))
         self._seed_block = seed_prompt_block(shared.get("seed_files"))
+        self._step_use = use_step_cache(shared)
+        self._step_folder = tutorial_dir(
+            shared.get("output_dir") or "output", shared.get("project_name") or "project"
+        )
+        self._step_key = content_key(IDENTIFY, files_data, identify_extra(shared))
+        self._step_hit = (
+            load_step(self._step_folder, IDENTIFY, self._step_key) if self._step_use else None
+        )
         return (
             context,
             file_listing_for_prompt,
@@ -413,6 +429,9 @@ class IdentifyAbstractions(Node):
             map_mode,
         ) = prep_res
         emit_step("identify")
+        if getattr(self, "_step_hit", None):
+            print("QUICK_STUDY_STEP_CACHE: identify hit")
+            return self._step_hit
         print(f"Identifying abstractions using LLM...")
 
         # Add language instruction and hints only if not English
@@ -430,11 +449,20 @@ class IdentifyAbstractions(Node):
             name_lang_hint = f" (value in {language.capitalize()})"
             desc_lang_hint = f" (value in {language.capitalize()})"
 
+        from utils.prompt_guard import (
+            GENERATE_SYSTEM,
+            enforce_audit,
+            generate_constraints_block,
+            wrap_untrusted,
+        )
+
+        context_block = wrap_untrusted(context, "source")
         prompt = f"""
+{generate_constraints_block()}
 For the project `{project_name}`:
 
 Codebase Context:
-{context}
+{context_block}
 
 {language_instruction}{extra_constraints}Analyze the codebase context.
 Identify the top 5-{max_abstraction_num} core most important abstractions to help those new to the codebase.
@@ -472,7 +500,9 @@ Format the output as a YAML list of dictionaries:
             use_cache=(use_cache and self.cur_retry == 0),
             temperature=YAML_TEMPERATURE,
             stage="identify",
+            system=GENERATE_SYSTEM,
         )
+        response = enforce_audit(response, refuse=False)
 
         from utils.identify_parse import parse_llm_structured
 
@@ -526,6 +556,10 @@ Format the output as a YAML list of dictionaries:
             )
 
         print(f"Identified {len(validated_abstractions)} abstractions.")
+        if getattr(self, "_step_use", False) and getattr(self, "_step_key", None):
+            from utils.step_cache import IDENTIFY, save_step
+
+            save_step(self._step_folder, IDENTIFY, self._step_key, validated_abstractions)
         return validated_abstractions
 
     def post(self, shared, prep_res, exec_res):
@@ -573,6 +607,28 @@ class AnalyzeRelationships(Node):
         file_context_str = clip_snippets(relevant_files_content_map)
         context += file_context_str
 
+        from utils.resume import tutorial_dir
+        from utils.step_cache import (
+            RELATIONSHIPS,
+            content_key,
+            load_step,
+            relationships_extra,
+            use_step_cache,
+        )
+
+        self._step_use = use_step_cache(shared)
+        self._step_folder = tutorial_dir(
+            shared.get("output_dir") or "output", shared.get("project_name") or "project"
+        )
+        self._step_key = content_key(
+            RELATIONSHIPS, files_data, relationships_extra(shared)
+        )
+        self._step_hit = (
+            load_step(self._step_folder, RELATIONSHIPS, self._step_key)
+            if self._step_use
+            else None
+        )
+
         return (
             context,
             "\n".join(abstraction_info_for_prompt),
@@ -592,6 +648,9 @@ class AnalyzeRelationships(Node):
             use_cache,
          ) = prep_res  # Unpack use_cache
         emit_step("relationships")
+        if getattr(self, "_step_hit", None):
+            print("QUICK_STUDY_STEP_CACHE: relationships hit")
+            return self._step_hit
         print(f"Analyzing relationships using LLM...")
 
         # Add language instruction and hints only if not English
@@ -603,14 +662,23 @@ class AnalyzeRelationships(Node):
             lang_hint = f" (in {language.capitalize()})"
             list_lang_note = f" (Names might be in {language.capitalize()})"  # Note for the input list
 
+        from utils.prompt_guard import (
+            GENERATE_SYSTEM,
+            enforce_audit,
+            generate_constraints_block,
+            wrap_untrusted,
+        )
+
+        context_block = wrap_untrusted(context, "source")
         prompt = f"""
+{generate_constraints_block()}
 Based on the following abstractions and relevant code snippets from the project `{project_name}`:
 
 List of Abstraction Indices and Names{list_lang_note}:
 {abstraction_listing}
 
 Context (Abstractions, Descriptions, Code):
-{context}
+{context_block}
 
 {language_instruction}Please provide:
 1. A high-level `summary` of the project's main purpose and functionality in a few beginner-friendly sentences{lang_hint}. Use markdown formatting with **bold** and *italic* text to highlight important concepts.
@@ -646,7 +714,9 @@ Now, provide the YAML output:
             use_cache=(use_cache and self.cur_retry == 0),
             temperature=YAML_TEMPERATURE,
             stage="relationships",
+            system=GENERATE_SYSTEM,
         )
+        response = enforce_audit(response, refuse=False)
 
         relationships_data = parse_llm_yaml(response)
 
@@ -696,10 +766,15 @@ Now, provide the YAML output:
                 raise ValueError(f"Could not parse indices from relationship: {rel}")
 
         print("Generated project summary and relationship details.")
-        return {
+        result = {
             "summary": relationships_data["summary"],  # Potentially translated summary
             "details": validated_relationships,  # Store validated, index-based relationships with potentially translated labels
         }
+        if getattr(self, "_step_use", False) and getattr(self, "_step_key", None):
+            from utils.step_cache import RELATIONSHIPS, save_step
+
+            save_step(self._step_folder, RELATIONSHIPS, self._step_key, result)
+        return result
 
     def post(self, shared, prep_res, exec_res):
         # Structure is now {"summary": str, "details": [{"from": int, "to": int, "label": str}]}
@@ -1106,7 +1181,16 @@ class WriteChapters(AsyncParallelBatchNode):
 
             bilingual_note = _bn(language)
 
+        from utils.prompt_guard import (
+            GENERATE_SYSTEM,
+            enforce_audit,
+            generate_constraints_block,
+            wrap_untrusted,
+        )
+
+        file_context_str = wrap_untrusted(file_context_str or "", "source")
         prompt = f"""
+{generate_constraints_block()}
 {language_instruction}Write a very beginner-friendly tutorial chapter (in Markdown format) for the project `{project_name}` about the concept: "{abstraction_name}". This is Chapter {chapter_num}.
 
 Concept Details{concept_details_note}:
@@ -1182,6 +1266,7 @@ Now, directly provide a super beginner-friendly Markdown output (DON'T need ```m
                             use_cache_now,
                             f"ch {chapter_num}/{len(item['chapter_filenames'])}",
                             stage="write",
+                            system=GENERATE_SYSTEM,
                         )
                     except TypeError:
                         return call_llm(
@@ -1193,6 +1278,7 @@ Now, directly provide a super beginner-friendly Markdown output (DON'T need ```m
                     limiter.release()
 
             chapter_content = await asyncio.to_thread(_write_call)
+        chapter_content = enforce_audit(chapter_content, refuse=False)
 
         text = finalize_chapter(chapter_content, chapter_num, abstraction_name)
         from utils.mermaid_validate import assert_chapter_mermaid
@@ -1403,7 +1489,14 @@ class CombineTutorial(Node):
             print(f"  - Wrote {chapter_filepath}")
 
         import hashlib
+        from pathlib import Path as _P
+        from utils.abstraction_map import write_abstraction_map
+        from utils.consistency_gate import run_consistency_gate
         from utils.dead_links import find_dead_markdown_links
+        from utils.glossary import build_glossary
+        from utils.heatmap import heatmap_markdown
+        from utils.timeout_hint import job_timeout_hint
+        from utils.versions import snapshot_tutorial
 
         include_material = json.dumps(
             {
@@ -1413,7 +1506,14 @@ class CombineTutorial(Node):
             },
             sort_keys=True,
         )
-        dead = find_dead_markdown_links(output_path)
+        gate = run_consistency_gate(_P(output_path))
+        print(
+            "QUICK_STUDY_CONSISTENCY: "
+            f"aligned={gate.get('glossary_aligned')} "
+            f"links={gate.get('required_links_added')} "
+            f"dead={len(gate.get('dead_links') or [])}"
+        )
+        dead = gate.get("dead_links") or find_dead_markdown_links(output_path)
         if dead:
             print(f"QUICK_STUDY_WARN: dead_links={len(dead)}")
         meta = {
@@ -1429,18 +1529,19 @@ class CombineTutorial(Node):
             "local_dir": prep_res.get("local_dir"),
             "upstream_commit": prep_res.get("upstream_commit"),
             "diagram_nodes": prep_res.get("diagram_nodes") or [],
+            "consistency": {
+                "ok": gate.get("ok"),
+                "glossary_aligned": gate.get("glossary_aligned"),
+                "required_links_added": gate.get("required_links_added"),
+                "dead_links": gate.get("dead_links"),
+                "missing_required_links": gate.get("missing_required_links"),
+                "polish": False,
+            },
         }
         meta_path = os.path.join(output_path, "meta.json")
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=2)
         print(f"  - Wrote {meta_path}")
-
-        from pathlib import Path as _P
-        from utils.abstraction_map import write_abstraction_map
-        from utils.glossary import build_glossary
-        from utils.heatmap import heatmap_markdown
-        from utils.timeout_hint import job_timeout_hint
-        from utils.versions import snapshot_tutorial
 
         write_abstraction_map(
             _P(output_path),

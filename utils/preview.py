@@ -32,6 +32,14 @@ def estimate_llm_calls(max_abstractions: int) -> dict:
     }
 
 
+def estimate_bundle(max_abstractions: int) -> dict:
+    """Calls + USD only. No crawl. Used when max_abstractions changes."""
+    from utils.provider_cost import estimate_preview_calls
+
+    calls = estimate_llm_calls(max_abstractions)
+    return {"estimated_calls": calls, "cost": estimate_preview_calls(calls["total"])}
+
+
 def derive_project_name(payload: dict) -> str:
     name = str(payload.get("name") or payload.get("project_name") or "").strip()
     if name:
