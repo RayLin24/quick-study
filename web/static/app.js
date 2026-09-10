@@ -18,6 +18,49 @@ const STEP_ORDER = ["fetch", "identify", "relationships", "order", "outline", "w
 
 let eventSource = null;
 let logCursor = 0;
+let lastPreview = null;
+let costRates = { rate_prompt_per_m: 0.15, rate_completion_per_m: 0.6, provider: "OPENROUTER" };
+
+function estimateCalls(n) {
+  const chapters = Math.max(1, Number(n) || 10);
+  return {
+    identify: 1,
+    relationships: 1,
+    order: 1,
+    write_chapters: chapters,
+    total: 3 + chapters,
+  };
+}
+
+function estimateUsd(calls) {
+  const avg = 2500;
+  const prompt = calls * avg * 0.7;
+  const completion = calls * avg * 0.3;
+  const usd =
+    (prompt / 1e6) * (costRates.rate_prompt_per_m || 0) +
+    (completion / 1e6) * (costRates.rate_completion_per_m || 0);
+  return {
+    provider: costRates.provider || "OPENROUTER",
+    usd: Math.round(usd * 1e6) / 1e6,
+    note: "按供应商公开标价估算，实际账单以供应商为准",
+    estimated: true,
+  };
+}
+
+function applyEstimateToPreview() {
+  if (!previewCard || previewCard.hidden || !lastPreview) return;
+  const n = Number((document.getElementById("max_abstractions") || {}).value || 10);
+  lastPreview.estimated_calls = estimateCalls(n);
+  lastPreview.cost = estimateUsd(lastPreview.estimated_calls.total);
+  showPreview(lastPreview);
+}
+
+fetch("/api/config")
+  .then((res) => res.json())
+  .then((cfg) => {
+    if (cfg && cfg.cost_rates) costRates = { ...costRates, ...cfg.cost_rates };
+  })
+  .catch(() => {});
 
 function sourceType() {
   return form.querySelector('input[name="source_type"]:checked').value;
@@ -485,6 +528,7 @@ async function runPreview() {
   if (!res.ok) {
     throw new Error(data.detail || "预检失败");
   }
+  lastPreview = data;
   showPreview(data);
   return data;
 }
@@ -665,9 +709,13 @@ if (maxAbs) {
   maxAbs.parentElement.appendChild(hint);
   const syncHint = () => {
     const n = Number(maxAbs.value || 10);
-    hint.textContent = n > 12 ? `max_abstractions=${n} 会增加写章次数与费用。` : "";
+    const est = estimateCalls(n);
+    const cost = estimateUsd(est.total);
+    hint.textContent = `估 ${est.total} 次 · $${cost.usd}` + (n > 12 ? ` · max_abstractions=${n} 会增加写章次数与费用。` : "");
+    applyEstimateToPreview();
   };
   maxAbs.addEventListener("input", syncHint);
+  maxAbs.addEventListener("change", syncHint);
   syncHint();
 }
 

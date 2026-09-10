@@ -103,8 +103,7 @@ crawl_cache/
 # Output files
 output/
 
-# uv manage
-pyproject.toml
+# uv lockfile (pyproject.toml is the install source)
 uv.lock
 
 docs/*.pdf

@@ -17,14 +17,37 @@
       <a href="/t/{{ tutorial_name }}">{{ tutorial_name }}</a>
     </nav>
     <nav class="export-nav" aria-label="导出">
-      <a href="/api/tutorials/{{ tutorial_name }}/llms.txt">llms.txt</a>
+      <details class="tools-drawer" id="tools-drawer">
+        <summary>工具</summary>
+        <div class="tools-drawer-panel">
+          {% for group in nav_groups or [] %}
+          <section>
+            <h3>{{ group.label }}</h3>
+            <ul>
+              {% for item in group.links %}
+              <li><a href="{{ item.href }}">{{ item.label }}</a></li>
+              {% endfor %}
+            </ul>
+          </section>
+          {% endfor %}
+          <section>
+            <h3>本教程导出</h3>
+            <ul>
+              <li><a href="/api/tutorials/{{ tutorial_name }}/pages.zip">GitHub Pages zip</a></li>
+              <li><a href="/api/tutorials/{{ tutorial_name }}/llms.txt">llms.txt</a></li>
+              <li><a href="/api/tutorials/{{ tutorial_name }}/export.zip">zip</a></li>
+              <li><a href="/api/tutorials/{{ tutorial_name }}/offline.html">离线 HTML</a></li>
+              <li><a href="/api/tutorials/{{ tutorial_name }}/glossary">术语表</a></li>
+              <li><a href="/api/tutorials/{{ tutorial_name }}/heatmap">热力图</a></li>
+              <li><a href="/embed/{{ tutorial_name }}">embed</a></li>
+            </ul>
+          </section>
+        </div>
+      </details>
+      <a href="/tools?t={{ tutorial_name }}">全部工具</a>
+      <a href="/api/tutorials/{{ tutorial_name }}/pages.zip">Pages</a>
       <a href="/api/tutorials/{{ tutorial_name }}/export.zip">zip</a>
-      <a href="/api/tutorials/{{ tutorial_name }}/obsidian.zip">Obsidian</a>
-      <a href="/api/tutorials/{{ tutorial_name }}/export.epub">EPUB</a>
       <a href="/api/tutorials/{{ tutorial_name }}/offline.html">离线 HTML</a>
-      <a href="/api/tutorials/{{ tutorial_name }}/glossary">术语表</a>
-      <a href="/api/tutorials/{{ tutorial_name }}/heatmap">热力图</a>
-      <a href="/embed/{{ tutorial_name }}">embed</a>
       {% if deepwiki %}<a href="{{ deepwiki }}" rel="noopener" target="_blank">DeepWiki</a>{% endif %}
       <button type="button" id="theme-toggle">深色阅读</button>
       <button type="button" id="lang-toggle" data-lang="{{ ui_lang or 'zh' }}">{{ 'EN' if ui_lang == 'en' else '中' }}</button>

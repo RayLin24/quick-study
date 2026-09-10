@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import sys
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -66,7 +68,9 @@ from utils.mcp_tools import call_mcp_tool, mcp_catalog
 from utils.mermaid_export import export_mermaid
 from utils.offline_html import build_offline_html
 from utils.pat_wizard import classify_pat, wizard_steps
-from utils.preview import PreviewError, preview_generation
+from utils.pages_site import build_pages_site, pages_file_list
+from utils.preview import PreviewError, estimate_bundle, preview_generation
+from utils.tools_nav import tools_nav
 from utils.pr_guide import build_pr_guide_prompt
 from utils.push_hook import hook_secret, incremental_job_from_push, verify_github_signature
 from utils.quiz import tutorial_quizzes
@@ -358,8 +362,31 @@ def create_app(
                 "i18n": catalog(lang),
                 "ui_lang": lang,
                 "continue_card": continue_card(output, load_progress_file(output)),
+                "nav_groups": tools_nav(),
             },
         )
+
+    @app.get("/tools", response_class=HTMLResponse)
+    def tools_page(request: Request):
+        lang = normalize_ui_lang(request.cookies.get("qs_lang") or request.query_params.get("lang"))
+        return TEMPLATES.TemplateResponse(
+            request,
+            "tools.html",
+            {
+                "tutorials": list_tutorials(output),
+                "nav_groups": tools_nav(),
+                "i18n": catalog(lang),
+                "ui_lang": lang,
+            },
+        )
+
+    @app.get("/api/tools/nav")
+    def api_tools_nav(tutorial: str = ""):
+        return {"groups": tools_nav(tutorial=tutorial or None)}
+
+    @app.get("/api/jobs/estimate")
+    def api_estimate(max_abstractions: int = 10):
+        return estimate_bundle(max_abstractions)
 
     @app.get("/api/tutorials")
     def api_tutorials():
@@ -703,12 +730,35 @@ def create_app(
                 "week_path": week_path(output / tutorial_name) if filename == "index.md" else {},
                 "i18n": catalog(normalize_ui_lang(request.cookies.get("qs_lang"))),
                 "ui_lang": normalize_ui_lang(request.cookies.get("qs_lang")),
+                "nav_groups": tools_nav(tutorial=tutorial_name),
             },
         )
 
     @app.get("/embed/{tutorial_name}", response_class=HTMLResponse)
     def embed_tutorial(request: Request, tutorial_name: str):
         return _tutorial_page(request, tutorial_name, "index.md")
+
+    @app.post("/api/tutorials/{tutorial_name}/pages")
+    def api_build_pages(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        dest = build_pages_site(folder)
+        return {"ok": True, "dir": "site", "files": pages_file_list(dest)}
+
+    @app.get("/api/tutorials/{tutorial_name}/pages.zip")
+    def api_pages_zip(tutorial_name: str):
+        folder = tutorial_folder(output, tutorial_name)
+        dest = build_pages_site(folder)
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in dest.rglob("*"):
+                if path.is_file():
+                    zf.write(path, path.relative_to(dest).as_posix())
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{tutorial_name}-pages.zip"'},
+        )
 
     @app.get("/api/tutorials/{tutorial_name}/offline.html")
     def api_offline_html(tutorial_name: str):

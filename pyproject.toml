@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quick-study"
+version = "0.4.0"
+description = "Turn a codebase into a beginner-friendly tutorial (CLI + optional web UI)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Quick Study" }]
+dependencies = [
+    "pocketflow>=0.0.1",
+    "pyyaml>=6.0",
+    "requests>=2.28.0",
+    "gitpython>=3.1.0",
+    "python-dotenv>=1.0.0",
+    "pathspec>=0.11.0",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.32.0",
+    "markdown>=3.6",
+    "python-multipart>=0.0.9",
+    "jinja2>=3.1.0",
+]
+gemini = [
+    "google-cloud-aiplatform>=1.25.0",
+    "google-genai>=1.9.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "quick-study[web]",
+]
+
+[project.scripts]
+quick-study = "main:cli"
+quick-study-mcp = "mcp_server:main"
+quick-study-web = "web.serve:main"
+
+[tool.setuptools]
+py-modules = ["main", "webapp", "flow", "nodes", "mcp_server"]
+
+[tool.setuptools.packages.find]
+include = ["utils*", "web*", "sdk*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -89,7 +89,10 @@ This is a tutorial project of [Pocket Flow](https://github.com/The-Pocket/Pocket
 3. Install dependencies:
    ```bash
    pip install -r requirements.txt
+   # or: pip install .          # CLI + MCP
+   #     pip install ".[web]"   # + FastAPI / uvicorn
    ```
+   Console scripts: `quick-study`, `quick-study-mcp`, `quick-study-web`.
 
 4. Set up LLM in [`utils/call_llm.py`](./utils/call_llm.py) by providing credentials. Copy [`.env.sample`](./.env.sample) to `.env`. The default is OpenRouter:
    ```env
@@ -147,7 +150,7 @@ This is a tutorial project of [Pocket Flow](https://github.com/The-Pocket/Pocket
   QUICK_STUDY_TOKEN=change-me docker compose up
   ```
 
-  Mermaid is pinned at **11.4.1** in `web/static/vendor/mermaid.min.js` (see `docs/mermaid-version.md`). Read-only MCP tools: `python mcp_server.py --list`.
+  Mermaid is pinned at **11.4.1** in `web/static/vendor/mermaid.min.js` (see `docs/mermaid-version.md`). Read-only MCP: `python mcp_server.py --list` or stdio JSON-RPC for Cursor (`python mcp_server.py --stdio` / `quick-study-mcp --stdio`). One-click GitHub Pages: `quick-study pages <tutorial>` writes `site/index.html` + `.nojekyll`.
 
 The application will crawl the repository, analyze the codebase structure, generate tutorial content in the specified language, and save the output in the specified directory (default: ./output).
 
