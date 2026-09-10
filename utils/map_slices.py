@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
-from utils.repo_map import extract_symbols
-from utils.source_format import unified_source_line
+from utils.repo_map import extract_symbol_locations, extract_symbols
+from utils.source_format import symbol_source_lines_enabled, unified_source_line
 
 
 def slice_file(path: str, content: str, *, max_chars: int = 1800) -> str:
     text = content or ""
-    symbols = extract_symbols(path, text)
-    header = f"--- File: {path} ---\n{unified_source_line(path)}\n"
+    locations = extract_symbol_locations(path, text)
+    symbols = [item["name"] for item in locations] or extract_symbols(path, text)
+    line = locations[0]["line"] if locations and symbol_source_lines_enabled() else None
+    header = f"--- File: {path} ---\n{unified_source_line(path, line)}\n"
     if symbols:
-        header += f"symbols: {', '.join(symbols)}\n"
+        labeled = ", ".join(
+            f"{item['name']}:L{item['line']}" for item in locations
+        ) or ", ".join(symbols)
+        header += f"symbols: {labeled}\n"
     if len(text) <= max_chars:
         return header + text
     # Prefer a window around the first symbol occurrence.

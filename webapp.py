@@ -18,7 +18,16 @@ from pydantic import BaseModel, Field
 from utils.annotations import add_annotation, load_annotations
 from utils.ask_thread import ask_with_thread
 from utils.ask_tutorial import AskRefused, AskResult, ask_tutorial_detailed
-from utils.auth_errors import AUTH_READ_ONLY, AUTH_UNAUTHORIZED, read_only, unauthorized
+from utils.auth_errors import (
+    AUTH_DEMO,
+    AUTH_LOGIN_INVALID,
+    AUTH_READ_ONLY,
+    AUTH_UNAUTHORIZED,
+    auth_code_catalog,
+    login_invalid,
+    read_only,
+    unauthorized,
+)
 from utils.audit_log import actor_id, append_audit, list_audit
 from utils.budget import BudgetExceeded, assert_budget
 from utils.commit_range import commit_range_guide
@@ -33,6 +42,11 @@ from utils.key_rotation import detect_key_files
 from utils.otel import span
 from utils.continue_reading import continue_card, load_progress_file, save_progress_file
 from utils.disaster_recovery import backup_output, restore_output
+from utils.gallery import gallery_payload, render_gallery_html
+from utils.i18n_audit import audit_hardcoded_zh, missing_key_report
+from utils.log_context import log_context
+from utils.map_inspect import inspect_html, inspect_map_slices
+from utils.tutorial_patch import patch_chapters_from_pr
 from utils.entry_files import pick_entry_files
 from utils.exercises import tutorial_exercises
 from utils.mem_guard import suggest_concurrency
@@ -111,19 +125,28 @@ TEMPLATES = Jinja2Templates(directory=str(WEB_DIR / "templates"))
 LOGIN_HTML = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><title>Quick Study 登录</title>
 <link rel="stylesheet" href="/static/app.css"></head>
-<body><main class="layout"><section class="panel">
+<body>
+<a class="skip-link" href="#login-form">跳到主内容</a>
+<main class="layout"><section class="panel">
 <div class="bind-warn" role="alert">
 <strong>公网 / 局域网绑定必须带令牌</strong>
 <p>未设置 <code>QUICK_STUDY_TOKEN</code> 时，非 127.0.0.1 绑定会拒绝启动，防止未授权的 LLM 调用。</p>
 </div>
 <h1>需要访问令牌</h1>
-<p>请输入环境变量 <code>QUICK_STUDY_TOKEN</code> 的值。</p>
-<form method="post" action="/login">
+<p>请输入环境变量 <code>QUICK_STUDY_TOKEN</code> 的值（写令牌）。只读令牌请用 <code>Authorization: Bearer</code>，不要走此表单。</p>
+<ul class="ask-hint" id="auth-codes">
+<li><code>AUTH_UNAUTHORIZED</code> 401 — 未带令牌</li>
+<li><code>AUTH_LOGIN_INVALID</code> 401 — 表单令牌不正确</li>
+<li><code>AUTH_READ_ONLY</code> 403 — 只读令牌拒绝生成 / 删除 / 备份</li>
+<li><code>AUTH_DEMO</code> 403 — 演示模式禁止生成</li>
+<li><code>AUTH_FORBIDDEN</code> 403 — 其它权限不足</li>
+</ul>
+<form id="login-form" method="post" action="/login">
 <label class="field"><span>令牌</span>
 <input type="password" name="token" autocomplete="off"></label>
 <button type="submit">进入</button>
 </form>
-<p class="error">{error}</p>
+<p class="error" role="alert">{error}</p>
 </section></main></body></html>
 """
 
@@ -178,10 +201,22 @@ class PresetIn(BaseModel):
 
 class BackupIn(BaseModel):
     dest: str = ""
+    passphrase: str = ""
 
 
 class RestoreIn(BaseModel):
     archive: str = ""
+    passphrase: str = ""
+
+
+class MapInspectIn(BaseModel):
+    files: dict = Field(default_factory=dict)
+
+
+class PrPatchIn(BaseModel):
+    diff: str = ""
+    title: str = "PR"
+    explanation: str = ""
 
 
 class ProgressIn(BaseModel):
@@ -320,7 +355,11 @@ def create_app(
         if path.startswith("/static/") or path in {"/healthz", "/api/config"}:
             return await call_next(request)
         if demo_enabled() and is_generate_path(request.method, path):
-            return JSONResponse({"detail": demo_payload()["detail"], "code": "demo"}, status_code=403)
+            body = demo_payload()
+            return JSONResponse(
+                {"detail": body["detail"], "code": body.get("code") or AUTH_DEMO, "demo": True},
+                status_code=403,
+            )
         try:
             token = token_from_headers(request.headers, request.cookies)
             app.state.rate_limiter.check(bucket_key(ip=request.client.host if request.client else "", token=token))
@@ -374,7 +413,12 @@ def create_app(
         token = str(form.get("token") or "").strip()
         expected = (os.getenv("QUICK_STUDY_TOKEN") or "").strip()
         if not expected or token != expected:
-            return HTMLResponse(LOGIN_HTML.format(error="令牌不正确"), status_code=401)
+            err = login_invalid()
+            return HTMLResponse(
+                LOGIN_HTML.format(error=err["detail"]),
+                status_code=401,
+                headers={"X-Quick-Study-Code": AUTH_LOGIN_INVALID},
+            )
         response = HTMLResponse('<meta http-equiv="refresh" content="0; url=/">')
         response.set_cookie("quick_study_token", token, httponly=True, samesite="lax")
         return response
@@ -443,17 +487,18 @@ def create_app(
                 ip=request.client.host if request.client else "",
             )
             append_audit(output, action="ask", actor=actor, detail={"tutorial": tutorial_name})
-            emit_run(output, "ask", tutorial=tutorial_name)
-            with span("ask", output_dir=output, attributes={"tutorial": tutorial_name}):
-                if body.thread:
-                    raw = ask_with_thread(folder, body.question, include_source=body.include_source)
-                else:
-                    try:
-                        raw = app.state.ask_fn(
-                            folder, body.question, include_source=body.include_source
-                        )
-                    except TypeError:
-                        raw = app.state.ask_fn(folder, body.question)
+            emit_run(output, "ask", tutorial=tutorial_name, stage="ask")
+            with log_context(tutorial=tutorial_name, stage="ask"):
+                with span("ask", output_dir=output, attributes={"tutorial": tutorial_name}):
+                    if body.thread:
+                        raw = ask_with_thread(folder, body.question, include_source=body.include_source)
+                    else:
+                        try:
+                            raw = app.state.ask_fn(
+                                folder, body.question, include_source=body.include_source
+                            )
+                        except TypeError:
+                            raw = app.state.ask_fn(folder, body.question)
         except BudgetExceeded as exc:
             raise HTTPException(status_code=429, detail=str(exc)) from exc
         except AskRefused as exc:
@@ -1277,14 +1322,52 @@ def create_app(
     @app.post("/api/ops/backup")
     def api_backup(body: BackupIn):
         dest = Path(body.dest) if body.dest else None
-        return backup_output(output, dest)
+        return backup_output(output, dest, passphrase=body.passphrase or None)
 
     @app.post("/api/ops/restore")
     def api_restore(body: RestoreIn):
         try:
-            return restore_output(Path(body.archive), output)
+            return restore_output(Path(body.archive), output, passphrase=body.passphrase or None)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/auth/codes")
+    def api_auth_codes():
+        return {"items": auth_code_catalog()}
+
+    @app.get("/api/i18n/audit")
+    def api_i18n_audit():
+        return audit_hardcoded_zh(ROOT)
+
+    @app.get("/gallery", response_class=HTMLResponse)
+    def gallery_page():
+        return HTMLResponse(render_gallery_html(gallery_payload(ROOT)))
+
+    @app.get("/api/gallery")
+    def api_gallery():
+        return gallery_payload(ROOT)
+
+    @app.post("/api/map-inspect")
+    def api_map_inspect(body: MapInspectIn):
+        return inspect_map_slices(body.files or {})
+
+    @app.post("/api/map-inspect.html", response_class=HTMLResponse)
+    def api_map_inspect_html(body: MapInspectIn):
+        return HTMLResponse(inspect_html(inspect_map_slices(body.files or {})))
+
+    @app.post("/api/tutorials/{tutorial_name}/patch-from-pr")
+    def api_patch_from_pr(tutorial_name: str, body: PrPatchIn):
+        folder = tutorial_folder(output, tutorial_name)
+        if not folder.is_dir():
+            raise HTTPException(status_code=404, detail="没有这篇教程")
+        return patch_chapters_from_pr(
+            folder,
+            body.diff,
+            title=body.title or "PR",
+            explanation=body.explanation,
+        )
 
     @app.get("/api/ops/memory")
     def api_memory(file_count: int = 0):

@@ -9,4 +9,6 @@
 3. 非回环绑定必须带写令牌，否则拒绝启动
 4. 只读令牌不能 `POST /api/jobs`
 
+权限矩阵（生成 / 删除 / 备份 = 写；MCP Ask = 读）：见 [readonly-permission-matrix.md](./readonly-permission-matrix.md)。
+
 单文件离线页：`GET /api/tutorials/<name>/offline.html`

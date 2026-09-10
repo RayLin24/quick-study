@@ -51,21 +51,32 @@ def _posix(path: str) -> str:
     return path.replace("\\", "/")
 
 
-def extract_symbols(path: str, content: str) -> list[str]:
-    found: list[str] = []
+def extract_symbol_locations(path: str, content: str) -> list[dict]:
+    found: list[dict] = []
     seen: set[str] = set()
     text = content or ""
     for pattern in _SYMBOL_PATTERNS:
-        for name in pattern.findall(text):
+        for match in pattern.finditer(text):
+            name = match.group(1)
             if not name or name in seen:
                 continue
             if name.startswith("_") and name != "__init__":
                 continue
             seen.add(name)
-            found.append(name)
+            line = text.count("\n", 0, match.start()) + 1
+            found.append({"name": name, "line": line, "path": path, "kind": "def"})
             if len(found) >= MAX_SYMBOLS_PER_FILE:
                 return found
     return found
+
+
+def extract_symbols(path: str, content: str) -> list[str]:
+    return [item["name"] for item in extract_symbol_locations(path, content)]
+
+
+def first_symbol_line(path: str, content: str) -> int | None:
+    items = extract_symbol_locations(path, content)
+    return int(items[0]["line"]) if items else None
 
 
 def file_importance(path: str, content: str) -> int:

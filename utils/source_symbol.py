@@ -9,7 +9,10 @@ SOURCE_LINE = re.compile(
 
 
 def source_symbol_targets(markdown: str) -> list[dict]:
+    from utils.source_format import split_source_ref
+
     found = []
     for match in SOURCE_LINE.finditer(markdown or ""):
-        found.append({"path": match.group(1), "symbol": match.group(2)})
+        path, line = split_source_ref(match.group(1))
+        found.append({"path": path, "symbol": match.group(2), "line": line})
     return found

@@ -155,7 +155,11 @@ def clip_snippets_with_stats(content_map, *, max_total_chars=None, max_file_char
         cut = len(raw) > max_file_chars
         body = raw[:max_file_chars]
         label = idx_path.split("# ", 1)[1] if "# " in idx_path else idx_path
-        piece = f"--- File: {label} ---\n*source: {label}*\n{body}\n\n"
+        from utils.source_format import symbol_source_lines_enabled, unified_source_line
+        from utils.repo_map import first_symbol_line
+
+        line = first_symbol_line(label, raw) if symbol_source_lines_enabled() else None
+        piece = f"--- File: {label} ---\n{unified_source_line(label, line)}\n{body}\n\n"
         if used + len(piece) > max_total_chars:
             truncated_files += len(items) - included
             break

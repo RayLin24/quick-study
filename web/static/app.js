@@ -73,6 +73,13 @@ function syncSourceFields() {
   });
 }
 
+function syncAdvancedOptions() {
+  const panel = document.getElementById("advanced-options");
+  if (!panel) return;
+  const mobile = window.matchMedia("(max-width: 800px)").matches;
+  panel.open = !mobile;
+}
+
 function setError(message) {
   if (!message) {
     errorEl.hidden = true;
@@ -696,6 +703,8 @@ cancelBtn.addEventListener("click", async () => {
 });
 
 syncSourceFields();
+syncAdvancedOptions();
+window.addEventListener("resize", syncAdvancedOptions);
 
 fetch("/api/jobs/current")
   .then(async (res) => {

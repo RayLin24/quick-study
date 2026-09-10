@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from urllib.parse import quote, urlparse
 
@@ -10,15 +11,41 @@ SOURCE_LINE_RE = re.compile(
 UNIFIED_SOURCE = "*source: {path}*"
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$", re.IGNORECASE)
 LINE_ANCHOR_RE = re.compile(r"#L(\d+)(?:-L?(\d+))?$", re.IGNORECASE)
+LINE_SUFFIX_RE = re.compile(r":L(\d+)$")
 
 
-def unified_source_line(path: str) -> str:
-    return UNIFIED_SOURCE.format(path=path)
+def symbol_source_lines_enabled() -> bool:
+    return (os.getenv("SYMBOL_SOURCE_LINES") or "").strip().lower() in {"1", "true", "yes"}
+
+
+def split_source_ref(ref: str) -> tuple[str, int | None]:
+    text = (ref or "").strip().strip("`")
+    match = LINE_SUFFIX_RE.search(text)
+    if not match:
+        return text, None
+    return text[: match.start()], int(match.group(1))
+
+
+def append_blob_line(url: str | None, line: int | None) -> str | None:
+    if not url or not line:
+        return url
+    if "#L" in url:
+        return url
+    return f"{url}#L{int(line)}"
+
+
+def unified_source_line(path: str, line: int | None = None) -> str:
+    clean, parsed = split_source_ref(path)
+    use_line = line if line is not None else parsed
+    if use_line:
+        return f"*source: {clean}:L{int(use_line)}*"
+    return UNIFIED_SOURCE.format(path=clean)
 
 
 def normalize_source_markup(text: str) -> str:
     def repl(match: re.Match[str]) -> str:
-        return unified_source_line(match.group(1).strip())
+        path, line = split_source_ref(match.group(1).strip())
+        return unified_source_line(path, line)
 
     return SOURCE_LINE_RE.sub(repl, text or "")
 
@@ -68,6 +95,9 @@ def github_blob_url(
     if not repo_url or not path:
         return None
     file_path, path_start, path_end = _split_line_anchor(path)
+    if path_start is None:
+        file_path, suffix_line = split_source_ref(file_path)
+        path_start = suffix_line
     start_line = start_line if start_line is not None else path_start
     end_line = end_line if end_line is not None else path_end
     pin = (sha or "").strip()
@@ -103,14 +133,16 @@ def _source_buttons(
 ) -> str:
     from utils.editor_open import resolve_editor_url
 
-    href = github_blob_url(repo_url, path, sha=sha) if repo_url else None
-    editor = resolve_editor_url(path, local_dir=local_dir)
-    open_btn = f'<a class="open-editor" href="{editor["vscode"]}" data-path="{path}">在编辑器打开</a>'
+    clean, line = split_source_ref(path)
+    href = github_blob_url(repo_url, clean, sha=sha, start_line=line) if repo_url else None
+    label = f"{clean}:L{line}" if line else clean
+    editor = resolve_editor_url(clean, local_dir=local_dir)
+    open_btn = f'<a class="open-editor" href="{editor["vscode"]}" data-path="{clean}">在编辑器打开</a>'
     if href:
-        return f'*source: <a href="{href}" target="_blank" rel="noreferrer">{path}</a>* {open_btn}'
+        return f'*source: <a href="{href}" target="_blank" rel="noreferrer">{label}</a>* {open_btn}'
     return (
-        f'*source: <code class="source-path" data-path="{path}">{path}</code>'
-        f'<button type="button" class="copy-path" data-path="{path}">复制路径</button> {open_btn}'
+        f'*source: <code class="source-path" data-path="{clean}">{label}</code>'
+        f'<button type="button" class="copy-path" data-path="{clean}">复制路径</button> {open_btn}'
     )
 
 

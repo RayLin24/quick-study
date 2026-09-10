@@ -9,6 +9,8 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
+from utils.log_context import merge_log_context
+
 
 def otel_enabled() -> bool:
     return (os.getenv("OTEL_TRACES") or "").strip().lower() in {"1", "true", "yes"}
@@ -21,12 +23,12 @@ def traces_path(output_dir: Path | None = None) -> Path:
 @contextmanager
 def span(name: str, *, output_dir: Path | None = None, attributes: dict | None = None):
     started = time.time()
-    rec = {
-        "trace_id": uuid.uuid4().hex,
-        "name": name,
-        "attributes": attributes or {},
-        "start": started,
-    }
+    rec = merge_log_context(
+        trace_id=uuid.uuid4().hex,
+        name=name,
+        attributes=attributes or {},
+        start=started,
+    )
     try:
         yield rec
         rec["status"] = "ok"

@@ -9,6 +9,8 @@
   <link rel="stylesheet" href="/static/vendor/github.min.css">
 </head>
 <body class="reading">
+  <a class="skip-link" href="#article-main">跳到主内容</a>
+  <a class="skip-link" href="#ask-title">跳到提问</a>
   <header class="top">
     <a class="brand" href="/">Quick Study</a>
     <nav class="crumb" aria-label="面包屑">
@@ -79,7 +81,7 @@
         {% endfor %}
       </ol>
     </aside>
-    <article class="prose">
+    <article class="prose" id="article-main">
       {% if stale and stale.stale %}
       <p class="stale-banner" role="status">教程可能过期：上游 commit 已漂移（{{ stale.recorded }} → {{ stale.current }}）</p>
       {% endif %}
@@ -179,7 +181,7 @@
         <button type="button" id="ask-btn">提问</button>
         <button type="button" id="ask-copy-md" hidden>复制为 Markdown</button>
         <p id="ask-error" class="error" hidden></p>
-        <div id="ask-answer" class="ask-answer" hidden></div>
+        <div id="ask-answer" class="ask-answer" hidden role="status" aria-live="polite" aria-atomic="true"></div>
         <details id="ask-used" class="ask-used" hidden>
           <summary>证据分层</summary>
           <h3 class="evidence-heading"><span class="evidence-tag evidence-tutorial">教程</span> 用了哪些章</h3>
@@ -253,6 +255,14 @@
         mermaid.init(undefined, document.querySelectorAll(".mermaid"));
       }
       bindMermaidChapterClicks();
+      document.querySelectorAll(".mermaid svg").forEach((svg) => {
+        svg.setAttribute("tabindex", "0");
+        svg.setAttribute("role", "img");
+        if (!svg.getAttribute("aria-label")) {
+          svg.setAttribute("aria-label", "教程关系图");
+        }
+        svg.classList.add("mermaid-svg-focus");
+      });
       document.querySelectorAll(".mermaid").forEach((node) => {
         if (!node.querySelector("svg")) {
           node.classList.add("mermaid-error");
