@@ -63,7 +63,7 @@ def _tutorial(tmp_path: Path, name="Demo"):
 def test_36_clone_bloat_docs_and_gitignore():
     gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
     assert ".playwright-mcp/" in gitignore
-    assert ".agent-teams/archive/" in gitignore
+    assert ".agent-teams/" in gitignore
     text = (ROOT / "docs" / "clone-bloat.md").read_text(encoding="utf-8")
     assert "sparse-checkout" in text
     assert "docs/PocketFlow" in text
@@ -278,7 +278,7 @@ def test_50_competitor_table_in_readme():
     assert "RepoWiki" in readme
     assert "self-hosted" in readme.lower() or "Self-hosted" in readme or "自托管" in readme
     assert (ROOT / "docs" / "competitors.md").is_file()
-    assert (ROOT / "docs" / "merge-after-10-14.md").is_file()
+    assert not (ROOT / "docs" / "merge-after-10-14.md").is_file()
 
 
 def test_36_50_map_inspect_and_i18n_http(tmp_path: Path):

@@ -9,9 +9,9 @@
 | 路径 | 原因 |
 | --- | --- |
 | `.playwright-mcp/` | 浏览器 MCP 缓存 / 扩展草稿 |
-| `.agent-teams/archive/` | 已归档的 agent-team 配置 |
+| `.agent-teams/` | agent-team inbox / archive / team.json 噪声 |
 
-当前仍在树里的副本会随下次清理消失；新 clone 不会再长这些目录。
+这些目录已从 git 树卸载；新 clone 不会再长出它们。
 
 ## 体积大的上游示例（不要当运行时依赖）
 

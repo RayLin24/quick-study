@@ -111,4 +111,4 @@ docs/design-cn.md
 
 # Local agent / browser MCP noise (#36)
 .playwright-mcp/
-.agent-teams/archive/
+.agent-teams/
