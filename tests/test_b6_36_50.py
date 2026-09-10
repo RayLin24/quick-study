@@ -247,6 +247,8 @@ def test_48_mobile_form_collapses_advanced(tmp_path: Path):
     html = _client(tmp_path).get("/").text
     assert 'id="advanced-options"' in html
     assert "高级选项" in html
+    js = (ROOT / "web" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "syncAdvancedOptions" in js
     css = (ROOT / "web" / "static" / "app.css").read_text(encoding="utf-8")
     assert "advanced-options" in css
     assert "max-width: 800px" in css
