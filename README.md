@@ -83,7 +83,7 @@ This is a tutorial project of [Pocket Flow](https://github.com/The-Pocket/Pocket
 
 1. Clone this repository
    ```bash
-   git clone https://github.com/The-Pocket/PocketFlow-Tutorial-Codebase-Knowledge
+   git clone https://github.com/RayLin24/quick-study
    ```
 
 3. Install dependencies:

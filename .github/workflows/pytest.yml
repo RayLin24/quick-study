@@ -1,0 +1,22 @@
+# This repo's own CI (checklist #9). Separate from the consumer
+# workflow_dispatch template in quick-study.yml — do not fold them together.
+name: pytest
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest httpx
+      - name: Run pytest
+        run: python -m pytest -q
