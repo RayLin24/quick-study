@@ -73,8 +73,6 @@ def parse_mermaid(source: str) -> dict:
             nodes.add(ident)
         for match in EDGE_RE.finditer(text):
             edges.append((match.group(1), match.group(2)))
-            nodes.add(match.group(1))
-            nodes.add(match.group(2))
         clicks = [match.group(1) for match in CLICK_RE.finditer(text)]
 
     return {"kind": kind, "nodes": sorted(nodes), "edges": edges, "clicks": clicks, "source": text}
