@@ -347,7 +347,7 @@ def test_35_adaptive_week_path_skips_read(tmp_path: Path):
     assert res.json()["adaptive"] is True
 
 
-def test_merge_after_docs_present():
-    text = Path("docs/merge-after-10-13.md").read_text(encoding="utf-8")
-    assert "PR #10" in text and "PR #13" in text
-    assert "#21" in text or "21–35" in text
+def test_merge_after_docs_removed():
+    # Coordinator merge notes are obsolete after #10–#15 landed on main.
+    assert not Path("docs/merge-after-10-13.md").is_file()
+    assert not Path("docs/merge-after-10-14.md").is_file()
