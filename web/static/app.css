@@ -862,15 +862,6 @@ button:disabled {
   color: #7a6a58;
 }
 
-@media (min-width: 801px) {
-  details.advanced-options > summary {
-    display: none;
-  }
-  details.advanced-options > :not(summary) {
-    display: block;
-  }
-}
-
 @media (max-width: 800px) {
   .layout,
   .reader {
