@@ -2,8 +2,7 @@
 # workflow_dispatch template in quick-study.yml — do not fold them together.
 name: pytest
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   pytest:

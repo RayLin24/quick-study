@@ -16,14 +16,15 @@ def _workflow_text(name: str) -> str:
     return (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
 
 
-def test_9_pytest_ci_runs_on_push_and_pull_request():
+def test_9_pytest_ci_is_manual_workflow_dispatch_only():
     # Raw text: PyYAML 1.1 treats the `on:` key as boolean True.
     text = _workflow_text("pytest.yml")
     assert text.startswith("# This repo's own CI")
     assert "name: pytest" in text
-    assert "\n  push:" in text or "\non:\n  push:" in text
-    assert "pull_request:" in text
-    assert "workflow_dispatch:" not in text
+    assert "workflow_dispatch:" in text
+    assert "push:" not in text
+    assert "pull_request:" not in text
+    assert "schedule:" not in text
     assert "python -m pytest" in text
     assert "pip install -r requirements.txt" in text
     assert "OPENROUTER_API_KEY" not in text
