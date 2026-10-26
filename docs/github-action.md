@@ -11,4 +11,4 @@
 
 ## 本仓 pytest CI（与上面的一键生成模板无关）
 
-`.github/workflows/pytest.yml` 在 **push** 和 **pull_request** 上跑 `python -m pytest -q`。失败则该 check 红，应设为 required status check（或等价规则）以挡住合并。不要把 pytest 塞进 `quick-study.yml` 的 `workflow_dispatch` 生成模板。
+`.github/workflows/pytest.yml` 只在手动 **workflow_dispatch** 时跑 `python -m pytest -q`（Actions → pytest → Run workflow）。不要把 pytest 塞进 `quick-study.yml` 的 `workflow_dispatch` 生成模板。
